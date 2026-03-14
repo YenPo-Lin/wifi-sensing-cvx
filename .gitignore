@@ -1,0 +1,17 @@
+# 1. 忽略 Python 自動產生的編譯資料夾 (必加)
+__pycache__/
+*.pyc
+
+# 2. 忽略實驗產出的圖片檔 (避免倉庫過大)
+*.png
+*.jpg
+*.jpeg
+Figure_*.png
+
+# 3. 忽略 example 內的輸出結果資料夾
+example/L1-norm_*/
+example/MUSIC_*/
+
+# 4. 忽略系統產生的隱藏檔 (Mac/Windows)
+.DS_Store
+Thumbs.db
