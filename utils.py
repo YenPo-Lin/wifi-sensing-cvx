@@ -4,6 +4,115 @@ import os
 import scipy.io as sio
 from utils import*
 import cvxpy as cvx
+import LASSO
+
+from tqdm import tqdm
+import MUSIC
+
+def save_all_MUSIC_spectrum_as_mat(CSI, args, f_start=0, f_end=5, f_step=1):
+    P_all = []
+
+    frame_indices = range(f_start, f_end, f_step)
+    print(f"🌀 Starting MUSIC processing for {len(frame_indices)} frames...")
+
+    for f_idx in tqdm(frame_indices, desc="Processing Frames", unit="frame"):
+            # MUSIC
+            x = MUSIC.cal_smoothed_csi(f_idx, CSI, args, avg=True)
+            x_cov = MUSIC.cal_smoothed_cov(x)
+            _, _, P_music_x = MUSIC.cal_spectrum(x_cov, args)
+            P_all.append(1/P_music_x)
+
+    P_all = np.array(P_all)
+    #print(f"P_all shape: {P_all.shape}")  # (num_frames, len(theta_grid), len(tau_grid))
+
+    # 封裝數據字典
+    mat_data = {
+        'P_all': P_all,
+        'file_name': args.csi_name,
+        'subc_stride': args.subc_stride,
+        'stream_win': args.stream_win,
+        'subc_win': args.subc_win,
+        'theta_min': args.theta_min,
+        'theta_max': args.theta_max,
+        'theta_step': args.theta_step,
+        'tau_min': args.tau_min,
+        'tau_max': args.tau_max,
+        'tau_step': args.tau_step
+    }
+    save_dir = args.mat_data_path
+    os.makedirs(save_dir, exist_ok=True)
+    mat_path = os.path.join(save_dir, f"(MUSIC){args.csi_name}.mat")
+    sio.savemat(mat_path, mat_data)
+    print(f"✨ Saved {args.csi_name}. Size: {P_all.shape}. Dir: {mat_path}")
+
+def save_all_LASSO_spectrum_as_mat(CSI, args, f_start=100, f_end=105, f_step=1):
+    P_all = []
+    A, theta_grid, tau_grid = LASSO.build_dictionary(args)
+
+    frame_indices = range(f_start, f_end, f_step)
+    print(f"🌀 Starting LASSO processing for {len(frame_indices)} frames...")
+    for frame_idx in tqdm(frame_indices, desc="Processing Frames", unit="frame"):
+        Y = LASSO.build_Y_packets(CSI, frame_idx, args.num_subcarriers, K_frame=args.multi_frame)
+        # --- SVD & Dynamic K Selection ---
+        #print(f"Y.shape before SVD {Y.shape}")
+        U, S, Vh = np.linalg.svd(Y, full_matrices=False)
+        # 方法 1: 使用能量比例
+        energy_thresh = args.energy_thresh
+        S_sq = S**2
+        K_subspace = np.searchsorted(np.cumsum(S_sq), np.sum(S_sq) * energy_thresh) + 1
+        K_subspace = np.clip(K_subspace, 2, 10)
+        #print(f"Dynamically selected K={K_subspace} (Energy Thresh={energy_thresh})")
+
+        Y = U[:, :K_subspace] @ np.diag(S[:K_subspace])
+        #print(f"Y.shape after SVD{Y.shape}")
+        
+
+        #print("🐌 Solving Group L2 Lasso... ")
+
+        X_cvx = LASSO.FISTA.FISTA_group_Lasso(A, Y, args.lam, max_iter=args.max_iter, tol=args.tol, verbose=False)
+        # X_cvx.shape(G * K)
+        X_cvx = np.linalg.norm(X_cvx, axis=1)
+        X_cvx = np.abs(X_cvx).reshape(len(theta_grid), len(tau_grid))
+        
+        pad_theta = 1  # 角度軸邊界
+        pad_tau = 1    # 延遲軸邊界
+        
+        # 將邊緣設為 0
+        X_cvx[:pad_theta, :] = 0  # 上邊界
+        X_cvx[-pad_theta:, :] = 0 # 下邊界
+        X_cvx[:, :pad_tau] = 0    # 左邊界
+        X_cvx[:, -pad_tau:] = 0   # 右邊界
+        
+        P_all.append(X_cvx)
+
+    P_all = np.array(P_all)
+    #print(f"P_all shape: {P_all.shape}")  # (num_frames, len(theta_grid), len(tau_grid))
+
+    # 封裝數據字典
+    mat_data = {
+        'P_all': P_all,
+        'file_name': args.csi_name,
+        #'subc_stride': args.subc_stride,
+        #'stream_win': args.stream_win,
+        #'subc_win': args.subc_win,
+        'theta_min': args.theta_min,
+        'theta_max': args.theta_max,
+        'theta_step': args.theta_step,
+        'tau_min': args.tau_min,
+        'tau_max': args.tau_max,
+        'tau_step': args.tau_step,
+        'energy_thresh': args.energy_thresh,
+        'multi_frame': args.multi_frame,
+        'max_iter': args.max_iter,
+        'tol': args.tol,
+        'lam': args.lam
+    }
+    save_dir = args.mat_data_path
+    os.makedirs(save_dir, exist_ok=True)
+    mat_path = os.path.join(save_dir, f"(LASSO){args.csi_name}.mat")
+    sio.savemat(mat_path, mat_data)
+    print(f"✨ Saved {args.csi_name}. Size: {P_all.shape}. Dir: {mat_path}")
+
 
 def steering_vector_AoA(theta_i, args, stream_win):
     fc = args.f_0

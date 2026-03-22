@@ -13,7 +13,7 @@ def save_as_mat(tau_grid, theta_grid, x_cvx, frame_idx, title=""):
     save_dir = "/Users/YPL/Documents/Experiments/cvx_mat/"
     os.makedirs(save_dir, exist_ok=True)
     # 存為 mat 文件，檔名與圖片對應
-    mat_path = os.path.join(save_dir, f"spectrum_{frame_idx:04d}.mat")
+    mat_path = os.path.join(save_dir, f"{frame_idx:04d}.mat")
     sio.savemat(mat_path, mat_data)
     print(f"Saved: {mat_path}")
 

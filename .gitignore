@@ -14,4 +14,6 @@ example/MUSIC_*/
 
 # 4. 忽略系統產生的隱藏檔 (Mac/Windows)
 .DS_Store
-Thumbs.db
+Thumbs.db*.mat
+*.asv
+.DS_Store

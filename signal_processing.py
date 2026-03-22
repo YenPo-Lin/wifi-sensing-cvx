@@ -3,6 +3,9 @@ import pre_processing
 import Plot
 import MUSIC
 import LASSO
+import os
+import scipy.io as sio
+import utils
 
 
 def signal_processing(CSI, args):
@@ -84,12 +87,15 @@ def signal_processing(CSI, args):
     '''
 
 
-    frame_idx =700
-    print(f"🚀 Processing Frame {frame_idx}... ")
+    frame_idx = 0
+    #print(f"🚀 Processing Frame {frame_idx}... ")
 
 
-    _,_,_ = LASSO.gen_L2_LASSO_prob(CSI, args, frame_idx, Nrx=args.num_Rx, Nsubc=args.num_subcarriers, lam=0.3)
-    MUSIC.gen_MUSIC_spectrum(frame_idx, CSI, args, avg=True, title=f"MUSIC @ frame{frame_idx}")
+    #_,_,_ = LASSO.gen_L2_LASSO_prob(CSI, args, frame_idx, Nrx=args.num_Rx, Nsubc=args.num_subcarriers, lam=args.lam)
+    #MUSIC.gen_MUSIC_spectrum(frame_idx, CSI, args, avg=True, title=f"MUSIC @ frame{frame_idx}")
+
+    utils.save_all_MUSIC_spectrum_as_mat(CSI, args, f_start=100, f_end=105, f_step=1)
+    utils.save_all_LASSO_spectrum_as_mat(CSI, args, f_start=100, f_end=105, f_step=1)
 
 
 

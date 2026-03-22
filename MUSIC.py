@@ -97,16 +97,16 @@ def cal_spectrum(smoothed_cov, args):
 
     # Noise subspace
     Sdim = 20
-    print(f"Selected signal subspace dimension Sdim={Sdim}.")
+    #print(f"Selected signal subspace dimension Sdim={Sdim}.")
     #print(f"top 20 eigen vals{eig_val[:20]}")
     N_dim = eig_val.shape[0] - Sdim
     E_n = eig_vec[:, -N_dim:]
     #P_n = E_n @ E_n.conj().T
 
     # theta candidate
-    theta = np.arange(-90, 91, 1) if args.projection=='sin' else np.arange(0, 181)
+    theta = np.arange(args.theta_min, args.theta_max + 1, args.theta_step) if args.projection=='sin' else np.arange(0, 181)
     # tau candidate
-    tau = np.arange(0, 2.5*1e-8, 5e-10) #40 points
+    tau = np.arange(args.tau_min, args.tau_max, args.tau_step) #40 points
 
     # steering_vector length:
     sv_len = args.stream_win * (args.subc_win // args.subc_stride)
