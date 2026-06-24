@@ -1,6 +1,5 @@
 import numpy as np
 import utils
-import cvxpy as cvx
 import Plot
 
 def build_dictionary(args, theta_min=-90, theta_max=90, theta_step=4, tau_min=0, tau_max=1.5e-8, tau_step=4e-10):
@@ -45,7 +44,7 @@ def build_dictionary_adp(Nrx, Nsubc, args, thteta_min=-90, theta_max=90, theta_s
             idx += 1
     return A, theta_grid, tau_grid
 
-def build_Y_packets(CSI, frame_idx, Nsubc, K_frame=21):
+def build_Y_packets(CSI, frame_idx, Nsubc, K_frame=11):
     if K_frame > 1:
         # 取 frame_idx 前後各 K//2 個（可自行改成只取往前）
         half = K_frame // 2
@@ -119,7 +118,7 @@ def gen_L2_LASSO_prob(CSI, args, frame_idx, Nrx, Nsubc, lam=0.1):
     X_cvx[:, :pad_tau] = 0    # 左邊界
     X_cvx[:, -pad_tau:] = 0   # 右邊界
 
-    Plot.save_as_mat(tau_grid, theta_grid, X_cvx, frame_idx)
+    #Plot.save_as_mat(tau_grid, theta_grid, X_cvx, frame_idx)
 
     Plot.plot_spectrum(frame_idx, tau_grid, theta_grid, X_cvx, args, title=f"Group Lasso lam={lam}")
 
@@ -133,7 +132,6 @@ def reconstruct(A, x_esti, peaks_i, theta_grid, tau_grid, radius=1):
             idx2 = i * len(tau_grid) + j
             x_top[idx2] = x_esti[idx2]
     return A @ x_top
-
 
 class FISTA:
     @staticmethod

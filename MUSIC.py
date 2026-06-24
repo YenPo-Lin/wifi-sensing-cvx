@@ -1,14 +1,51 @@
 import numpy as np
 import utils
 import Plot
+import matplotlib.pyplot as plt
 
 def gen_MUSIC_spectrum(frame_idx, CSI, args, avg=True, title="MUSIC"):
     x = cal_smoothed_csi(frame_idx, CSI, args, avg)
     x_cov = cal_smoothed_cov(x)
+    print(f"x_cov.shape={x_cov.shape}")
     tau_x, theta_x, P_music_x = cal_spectrum(x_cov, args)
 
     #Plot.save_as_mat(tau_x, theta_x, P_music_x, frame_idx)
     Plot.plot_spectrum(frame_idx, tau_x, theta_x, P_music_x, args, title=title)
+
+# ⭐️直接生成 1D Azi or ToF MUSIC 。
+# 呼叫畫 Azi
+def gen_1D_MUSIC_spectrum(CSI, frame_idx, args, Sdim=2, spec_type='Azi', gt_AoA= ""):
+    covs = []
+    for f in range(frame_idx - 10, frame_idx + 10 + 1):
+        covs.append(CSI[f, 0, :]@CSI[f, 0, :].conj().T)  # Tx=0
+    cov = np.mean(covs, axis=0)
+        # Eigen decomposition
+    eig_val, eig_vec = np.linalg.eigh(cov)
+
+    # Sort from large to small
+    idx_order = eig_val.argsort()[::-1]
+    eig_val = eig_val[idx_order]
+    eig_vec = eig_vec[:, idx_order]
+
+    # Noise subspace
+    En = eig_vec[:, Sdim:]
+
+    # Azi grid
+    theta = np.arange(args.theta_min, args.theta_max + args.theta_step, args.theta_step)
+
+    num_Rx = CSI.shape[2]
+    SV = np.zeros((len(theta), num_Rx), dtype=complex)
+
+    for i, theta_i in enumerate(theta):
+        SV[i, :] = utils.steering_vector_AoA(theta_i, args, num_Rx)
+
+    # MUSIC denominator: || a^H En ||^2
+    A = SV @ En
+    PP = np.sum(np.abs(A) ** 2, axis=1)
+
+    P_music = 10 * np.log10(1.0 / (PP + 1e-12))
+
+    return theta, P_music, eig_val
 
 def smooth_csi(csi, num_Rx, num_subcarriers, stream_win, sub_win, sub_stride):
     """
@@ -44,7 +81,7 @@ def cal_smoothed_csi(frame_idx, CSI, args, avg=True):
                     CSI[frame_idx -avg_frame//2 + i], 
                     num_Rx = args.num_Rx, 
                     num_subcarriers = args.num_subcarriers, 
-                    stream_win = args.stream_win, 
+                    stream_win = args.antenna_win, 
                     sub_win = args.subc_win, 
                     sub_stride = args.subc_stride
                     )
@@ -55,7 +92,7 @@ def cal_smoothed_csi(frame_idx, CSI, args, avg=True):
                 CSI[frame_idx], 
                 num_Rx = args.num_Rx, 
                 num_subcarriers = args.num_subcarriers, 
-                stream_win = args.stream_win, 
+                stream_win = args.antenna_win, 
                 sub_win = args.subc_win, 
                 sub_stride = args.subc_stride
                 )
@@ -96,7 +133,7 @@ def cal_spectrum(smoothed_cov, args):
     '''
 
     # Noise subspace
-    Sdim = 20
+    Sdim = args.Sdim
     #print(f"Selected signal subspace dimension Sdim={Sdim}.")
     #print(f"top 20 eigen vals{eig_val[:20]}")
     N_dim = eig_val.shape[0] - Sdim
@@ -104,19 +141,19 @@ def cal_spectrum(smoothed_cov, args):
     #P_n = E_n @ E_n.conj().T
 
     # theta candidate
-    theta = np.arange(args.theta_min, args.theta_max + 1, args.theta_step) if args.projection=='sin' else np.arange(0, 181)
+    theta = np.arange(args.theta_min, args.theta_max + 1, args.theta_step)
     # tau candidate
     tau = np.arange(args.tau_min, args.tau_max, args.tau_step) #40 points
 
     # steering_vector length:
-    sv_len = args.stream_win * (args.subc_win // args.subc_stride)
+    sv_len = args.antenna_win * (args.subc_win // args.subc_stride)
     # calculate all steering vectors at once:
     Steering_Vectors = np.zeros((len(theta), len(tau), sv_len), dtype=complex)
     for i in range(len(theta)):
         for j in range(len(tau)):
-            sv = utils.steering_vector_AoA_ToF(theta[i],tau[j],args, args.stream_win, args.subc_win, args.subc_stride)
+            sv = utils.steering_vector_AoA_ToF(theta[i],tau[j],args, args.antenna_win, args.subc_win, args.subc_stride)
             Steering_Vectors[i,j,:] = sv
-            #sv_aoa = AoA.steering_vector_AoA(theta[i], args)
+            #sv_aoa = Azi.steering_vector_AoA(theta[i], args)
             #sv_tof = ToF.steering_vector_ToF(tau[j], args)
             #sv = np.kron(sv_aoa, sv_tof).flatten()
             #Steering_Vectors[i,j,:] = sv

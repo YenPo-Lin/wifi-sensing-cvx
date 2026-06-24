@@ -3,19 +3,6 @@ import scipy.io as sio
 import numpy as np
 import matplotlib.pyplot as plt
 
-def save_as_mat(tau_grid, theta_grid, x_cvx, frame_idx, title=""):
-    mat_data = {
-        'tau': tau_grid,
-        'theta': theta_grid,
-        'P_music': x_cvx,
-        'frame_idx': frame_idx
-    }
-    save_dir = "/Users/YPL/Documents/Experiments/cvx_mat/"
-    os.makedirs(save_dir, exist_ok=True)
-    # 存為 mat 文件，檔名與圖片對應
-    mat_path = os.path.join(save_dir, f"{frame_idx:04d}.mat")
-    sio.savemat(mat_path, mat_data)
-    print(f"Saved: {mat_path}")
 
 def plot_spectrum(frame_idx, tau, theta, P_music, args, title=""):
     #peaks = find_Peaks.find_AoA_ToF_peaks(P_music, theta, tau)
@@ -33,7 +20,7 @@ def plot_spectrum(frame_idx, tau, theta, P_music, args, title=""):
 
     plt.xlabel('tau (s)')
     plt.ylabel('theta (deg)')
-    plt.title('AoA-ToF '+ title + ' @ frame ' + str(frame_idx), fontsize = 8)
+    plt.title('Azi-ToF '+ title + ' @ frame ' + str(frame_idx), fontsize = 8)
 
     # --- save figures ---
     save_dir = args.pics_dir
@@ -44,97 +31,36 @@ def plot_spectrum(frame_idx, tau, theta, P_music, args, title=""):
         )
         plt.savefig(save_path, dpi=100)
         plt.close()
+        print(f"Saved: {save_path}")
 
-def plot_phase_along_subcarrier(CSI, args, frame_idx, title_prefix=""):
-    """
-    只畫某一個 frame 的每個 Rx：phase(angle) vs subcarrier index
-    CSI shape: (T, Tx, Rx, Subc) complex
-    """
-    H = CSI[frame_idx, 0]  # (Rx, Subc)
-    Nrx, Nsubc = H.shape
-    sub_idx = np.arange(Nsubc)
-
-    plt.figure(figsize=(10,4))
+def plot_spectrum3D(frame_idx, tau, theta, P_music, args, title=""):
+    # 建立畫布，並指定為 3D 投影
+    fig = plt.figure(figsize=(10, 7))
+    ax = fig.add_subplot(111, projection='3d')
     
-    for r in range(min(args.num_Rx, Nrx)):
-        ph = np.angle(H[r, :])
-        # ⭐️ unwrapping
-        ph = np.unwrap(ph)
-        plt.plot(sub_idx, ph, label=f"Rx{r}")
+    # 1. 建立 2D 網格 (plot_surface 需要 X, Y 都是 2D 矩陣)
+    if tau.ndim == 1 and theta.ndim == 1:
+        Tau_grid, Theta_grid = np.meshgrid(tau, theta)
+    else:
+        Tau_grid, Theta_grid = tau, theta
 
-    plt.xlabel("Subcarrier index")
-    plt.ylabel("Phase (rad)")
-    plt.title(f"{title_prefix}Phase vs Subcarrier | frame={frame_idx}")
-    plt.legend(ncol=2, fontsize=8)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+    # 2. 避免微小虛數引發警告，取絕對值
+    Z = np.abs(P_music)
 
-def plot_phase_along_time(CSI, args, subc_idx=0, title_prefix=""):
-    """
-    只畫某一個 frame 的每個 Rx：phase(angle) vs subcarrier index
-    CSI shape: (T, Tx, Rx, Subc) complex
-    """
-    H = CSI[:, 0, :, subc_idx]  # (Rx, Subc)
-    Nrx = CSI.shape[2]
-    frame_idx = np.arange(CSI.shape[0])
+    # 3. 繪製 3D 曲面 (山谷/地形圖效果)
+    # rstride 與 cstride 控制網格粗細，cmap 延續你原本的 'jet'
+    surf = ax.plot_surface(Tau_grid, Theta_grid, Z, cmap='jet', 
+                           linewidth=0, antialiased=True, shade=True)
 
-    plt.figure(figsize=(10,4))
-    
-    for r in range(min(args.num_Rx, Nrx)):
-        ph = np.angle(H[:, r])
-        # ⭐️ unwrapping
-        ph = np.unwrap(ph)
-        plt.plot(frame_idx, ph, label=f"Rx{r}")
+    # 加上 Colorbar，並調整大小比例避免過大
+    fig.colorbar(surf, ax=ax, shrink=0.5, aspect=10, pad=0.1)
 
-    plt.xlabel("time index")
-    plt.ylabel("Phase (rad)")
-    plt.title(f"{title_prefix}Phase vs Time | subcarrier={subc_idx}")
-    plt.legend(ncol=2, fontsize=8)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
+    # 4. 設定視角 (仰角 elev, 方位角 azim)，可根據需求調整以看清楚山谷深度
+    ax.view_init(elev=30, azim=-45)
 
-def plot_phases_along_time(CSI, rx_idx=0, title_prefix=""):
-    """
-    畫出第 rx_idx 個 Rx 的前30個 subcarrier 的 phase(angle) vs time
-    """
-    H = CSI[:, 0, rx_idx, 0:30]  # (Rx, Subc)
-    Nsubc = 30
-    frame_idx = np.arange(CSI.shape[0])
+    # 5. 設定標籤與標題 (延續前面改為 ns 的單位)
+    ax.set_xlabel('ToF (ns)', labelpad=10)
+    ax.set_ylabel('Azi (deg)', labelpad=10)
+    ax.set_zlabel('Spectrum Power', labelpad=10)
+    ax.set_title('3D Azi-ToF ' + title + ' @ frame ' + str(frame_idx), fontsize=10)
 
-    plt.figure(figsize=(10,4))
-    
-    for r in range(Nsubc):
-        ph = np.angle(H[:, r])
-        # ⭐️ unwrapping
-        ph = np.unwrap(ph)
-        plt.plot(frame_idx, ph, label=f"subcarrier{r}")
-
-    plt.xlabel("time index")
-    plt.ylabel("Phase (rad)")
-    plt.title(f"{title_prefix}top 30 subcarrier Phase vs Time | Rx={rx_idx}")
-    #plt.legend(ncol=5, fontsize=8)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
-
-def plot_amps_along_time(CSI, rx_idx=0, title_prefix=""):
-    """
-    畫出第 rx_idx 個 Rx 的前30個 subcarrier 的 phase(angle) vs time
-    """
-    H = CSI[:, 0, rx_idx, 0:30]  # (Rx, Subc)
-    Nsubc = 30
-    frame_idx = np.arange(CSI.shape[0])
-
-    plt.figure(figsize=(10,4))
-    
-    for r in range(Nsubc):
-        ph = 10 * np.log10(np.abs(H[:, r]))
-        # ⭐️ unwrapping
-        ph = np.unwrap(ph)
-        plt.plot(frame_idx, ph, label=f"subcarrier{r}")
-
-    plt.xlabel("time index")
-    plt.ylabel("Magnitude (dB)")
-    plt.title(f"{title_prefix}top 30 subcarrier Amp vs Time | Rx={rx_idx}")
-    #plt.legend(ncol=5, fontsize=8)
-    plt.grid(True, alpha=0.3)
-    plt.tight_layout()
