@@ -4,6 +4,9 @@ import pywt
 import pre_processing as pp
 
 def sample_subcarriers(args, CSI, freq_space=16):
+    if freq_space == 1:
+        return CSI
+    
     """
     現在的CSI(T=frames, M=8, K=2025)
     BW=160MHz, K=2025, delta_f=78.125kHz

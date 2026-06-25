@@ -5,10 +5,63 @@ import utils
 import Plot
 import matplotlib.pyplot as plt
 
+def estimate_Sdim(Rxx, energy_ratio=0.88, min_dim=1, max_dim=None):
+    arr = np.asarray(Rxx)
+
+    if arr.ndim == 2:
+        if arr.shape[0] != arr.shape[1]:
+            raise ValueError(f"Rxx must be square, got {arr.shape}")
+        eig_val = np.linalg.eigvalsh(arr)
+    elif arr.ndim == 1:
+        eig_val = arr
+    else:
+        raise ValueError(f"Invalid Rxx shape: {arr.shape}")
+
+    eig_val = np.sort(np.real(eig_val))[::-1]
+    eig_val = np.maximum(eig_val, 1e-12)
+
+    M = eig_val.size
+    if M < 2:
+        raise ValueError("Need at least two eigenvalues.")
+
+    if max_dim is None:
+        max_dim = M - 1
+
+    min_dim = int(np.clip(min_dim, 1, M - 1))
+    max_dim = int(np.clip(max_dim, min_dim, M - 1))
+    energy_ratio = float(np.clip(energy_ratio, 1e-6, 1.0))
+
+    cumulative = np.cumsum(eig_val) / np.sum(eig_val)
+    Sdim = np.searchsorted(cumulative, energy_ratio) + 1
+    return int(np.clip(Sdim, min_dim, max_dim))
+
+def resolve_Sdim(args, eig_val, label="MUSIC"):
+    M = len(eig_val)
+
+    if getattr(args, "Sdim", None) is not None:
+        Sdim = int(args.Sdim)
+    else:
+        energy_ratio = getattr(
+            args,
+            "Sdim_energy_ratio",
+            getattr(args, "Sdim_energy_ratio", 0.88),
+        )
+        Sdim = estimate_Sdim(
+            eig_val,
+            energy_ratio=energy_ratio,
+            min_dim=getattr(args, "Sdim_min", 1),
+            max_dim=M - 1,
+        )
+        print(f"Estimated Sdim={Sdim} (energy_ratio={energy_ratio:.2f})")
+
+    Sdim = int(np.clip(Sdim, 1, M - 1))
+    return Sdim
+
 class Azi_ToF:
     def __init__(self, args):
         self.args = args
         self.fs = args.fs
+        self.avg_frames = args.avg_frames
         self.num_Rx = args.num_Rx
         self.num_subcarriers = args.num_subcarriers
         self.stream_win = args.stream_win
@@ -66,10 +119,9 @@ class Azi_ToF:
                 f"stream_sample_range={self.stream_sample_range}"
             )
 
-    def gen_MUSIC_spectrum(self, frame_idx, CSI, avg=True, title="MUSIC"):
+    def gen_spectrum(self, CSI, frame_idx, avg=True, title="MUSIC"):
         x = self.cal_smoothed_csi(frame_idx, CSI, avg)
         x_cov = self.cal_smoothed_cov(x)
-        print(f"x_cov.shape={x_cov.shape}")
         tau_x, theta_x, P_music_x = self.cal_spectrum(x_cov)
 
         #Plot.save_as_mat(tau_x, theta_x, P_music_x, frame_idx)
@@ -98,9 +150,9 @@ class Azi_ToF:
     def cal_smoothed_csi(self, frame_idx, CSI, avg=True):
             smoothed_CSIs = []
             if avg:
-                avg_frame = int(self.fs * 0.2)
-                for i in range(avg_frame):
-                    smoothed_csi = self.smooth_csi(CSI[frame_idx -avg_frame//2 + i])
+                avg_frames = self.avg_frames
+                for i in range(avg_frames):
+                    smoothed_csi = self.smooth_csi(CSI[frame_idx -avg_frames//2 + i])
                     smoothed_CSIs.append(smoothed_csi)
 
             else:
@@ -143,7 +195,7 @@ class Azi_ToF:
         '''
 
         # Noise subspace
-        Sdim = self.Sdim
+        Sdim = resolve_Sdim(self.args, eig_val)
         #print(f"Selected signal subspace dimension Sdim={Sdim}.")
         #print(f"top 20 eigen vals{eig_val[:20]}")
         N_dim = eig_val.shape[0] - Sdim
@@ -205,7 +257,7 @@ class Azi_ToF:
 class ToF_Doppler:
     def __init__(self, args):
         self.args = args
-        self.Sdim = int(args.Sdim)
+        self.Sdim = getattr(args, "Sdim", None)
         self.num_Rx = getattr(args, "num_Rx", None)
         self.num_subcarriers = int(args.num_subcarriers)
         self.freq_win = int(args.freq_win)
@@ -356,8 +408,10 @@ class ToF_Doppler:
         eig_val, eig_vec = eig_val[idx_order], eig_vec[:, idx_order]
 
         # Signal subspace projection, same convention as XMUSIC_ToF_Dop/Guan.
-        Sdim = self.Sdim
-        Sdim = int(np.clip(Sdim, 1, Rxx.shape[0] - 1))
+        if self.Sdim is None:
+            Sdim = resolve_Sdim(self.args, eig_val, label="ToF-Doppler")
+        else:
+            Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
         E_s = eig_vec[:, :Sdim]
 
         tau = self.tau_grid
@@ -383,13 +437,14 @@ class ToF_Doppler:
         vmin = max(np.nanpercentile(P_tof_dop, self.floor_percentile), -self.dynamic_range_db)
         if abs(vmin) < 1e-9:
             vmin = -1.0
+        tau_axis, tau_label = Plot._tof_axis_values_and_label(tau, self.args)
 
         fig, ax = plt.subplots(figsize=(8, 6))
-        c = ax.pcolormesh(fd, tau * 1e9, P_tof_dop, cmap='jet', shading='auto', vmin=vmin, vmax=0.0)
+        c = ax.pcolormesh(fd, tau_axis, P_tof_dop, cmap='jet', shading='auto', vmin=vmin, vmax=0.0)
         fig.colorbar(c, ax=ax, label='Relative Power (dB)')
         ax.axvline(0, color="white", linestyle="--", linewidth=1, alpha=0.6)
         ax.set_xlabel('Doppler (fd) [Hz]')
-        ax.set_ylabel('ToF (τ) [ns]')
+        ax.set_ylabel(tau_label)
         if self.last_meta is None:
             ax.set_title(f'{title} Heatmap @ Frame {frame_idx}')
         else:

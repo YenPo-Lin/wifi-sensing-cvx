@@ -3,6 +3,7 @@ import pre_processing as pp
 import MUSIC
 import LASSO
 import os
+import time
 
 
 
@@ -23,17 +24,21 @@ def signal_processing(raw_CSI, args):
 
 
     
-    frame_idx = 1730
+    frame_idx = 1300
 
     print(f"Processing Frame {frame_idx}... ")
 
     #_,_,_ = LASSO.gen_L2_LASSO_prob(CSI_dwt, args, frame_idx, Nrx=args.num_Rx, Nsubc=args.num_subcarriers, lam=args.lam)
 
     #azi_tof.gen_MUSIC_spectrum(frame_idx, CSI)
-    tof_dop.gen_spectrum(CSI, frame_idx)
-
+    start = time.time()
+    #tof_dop.gen_spectrum(CSI, frame_idx)
+    for i in range(800, 1200, 60):
+        tof_dop.gen_spectrum(CSI, i)
+    #azi_tof.gen_spectrum(CSI, frame_idx)
+    end = time.time()
+    print(f"Heatmap Computation Time: {end - start}")
 
 
 
     
-
