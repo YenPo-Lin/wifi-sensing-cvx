@@ -11,9 +11,9 @@ def steering_vector_AoA(theta_i, args, stream_win):
         sv = np.exp(2j * np.pi * fc * (1 - np.cos(theta_i)) * args.antenna_spacing / 3e8 * np.arange(stream_win))
     return sv.flatten()
 
-def steering_vector_ToF(tau_i, args, subc_win, subc_stride=1):
-    row_size = subc_win // subc_stride
-    sub_idx = np.arange(0, row_size) * subc_stride  #[0 4 8 ... 252] 64 points
+def steering_vector_ToF(tau_i, args, freq_win, freq_hop=1):
+    row_size = freq_win // freq_hop
+    sub_idx = np.arange(0, row_size) * freq_hop  #[0 4 8 ... 252] 64 points
     # carrier delay
     #const_phase = np.exp(-2j * np.pi * args.f_0 * tau_i)
     # subcarrier frequency phase
@@ -21,15 +21,15 @@ def steering_vector_ToF(tau_i, args, subc_win, subc_stride=1):
     #sv = subc_phase* const_phase
     return sv.flatten()
 
-def steering_vector_AoA_ToF(theta_i, tau_j, args, stream_win, subc_win, subc_stride=1):
+def steering_vector_AoA_ToF(theta_i, tau_j, args, stream_win, freq_win, freq_hop=1):
         delta_f = args.delta_f
         theta_i = np.deg2rad(theta_i)
         
         # ----------------------
         # Subcarrier (ToF + carrier) phase
         # ----------------------
-        row_size = subc_win // subc_stride #256//4=64
-        sub_idx = np.arange(0, row_size) * subc_stride  #[0 4 8 ... 252] 64 points
+        row_size = freq_win // freq_hop #256//4=64
+        sub_idx = np.arange(0, row_size) * freq_hop  #[0 4 8 ... 252] 64 points
 
         # carrier delay
         #const_phase = np.exp(-2j * np.pi * fc * tau_j)

@@ -11,11 +11,8 @@ def create_parser():
     parser = argparse.ArgumentParser()
 
     # npz 文件路徑
-    parser.add_argument(
-        '--csi_file', 
-        type=str, 
-        default="/Users/YPL/Documents/Experiments/CSI_files/intermediates/left-hand-311/merged_csi/left-hand-311.npz"
-        )
+    file_path = "/Users/YPL/Downloads/20260624-205139_walk-left-right.npz"
+    parser.add_argument('--csi_file', type=str, default=file_path)
     
     # ---- CSI parameters ----
     parser.add_argument('--f_0', type=float, default=5.57e9)
@@ -26,18 +23,39 @@ def create_parser():
     
     # ---- MUSIC settings ----
     parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'dwt'])
-    parser.add_argument('--Sdim', type=int, default=12)
+    parser.add_argument('--Sdim', type=int, default=131)
     parser.add_argument('--projection', type=str, default='sin', choices=['sin', 'cos'])
 
-    parser.add_argument('--antenna_win', type=int, default=5)
-    parser.add_argument('--subc_win', type=int, default=1024)
-    parser.add_argument('--subc_stride', type=int, default=16)
+    parser.add_argument('--stream_win', type=int, default=5)
+    parser.add_argument('--stream_sample_range', type=int, default=8) #all Rx
+
+    parser.add_argument('--freq_win', type=int, default=100)
+    parser.add_argument('--freq_hop', type=int, default=32)
+    parser.add_argument('--freq_sample_range', type=int, default=2025) #all subcarriers
+    parser.add_argument('--freq_space', type=int, default=16) # if freq resampling
+
+
+    parser.add_argument('--time_win', type=int, default=25)
+    parser.add_argument('--time_hop', type=int, default=1)
+    parser.add_argument('--time_sample_range', type=int, default=100) #100 frames
+
+    # Azimuth grid
     parser.add_argument('--theta_min', type=float, default= -90)
     parser.add_argument('--theta_max', type=float, default= 90)
     parser.add_argument('--theta_step', type=int, default=3)
-    parser.add_argument('--tau_min', type=float, default=0)
-    parser.add_argument('--tau_max', type=float, default=20e-9)
+    # Time of Flight grid
+    parser.add_argument('--axis', type=str, default='m', choices=['ns', 'm'])
+    parser.add_argument('--tau_min', type=float, default=2e-9)
+    parser.add_argument('--tau_max', type=float, default=25e-9)
     parser.add_argument('--tau_step', type=float, default=5e-10)
+    # Doppler grid
+    parser.add_argument('--doppler_min', type=float, default=-30)
+    parser.add_argument('--doppler_max', type=float, default=30)
+    parser.add_argument('--doppler_step', type=float, default=1)
+
+    # heatmap axis (X: Azi, Y: TOF if True)
+    parser.add_argument('--axis_flip', type=bool, default=True)
+    
     
     # ---- 圖片保存路徑 ----
     parser.add_argument('--pics_dir', type=str, default=None)

@@ -3,6 +3,29 @@ import matplotlib.pyplot as plt
 import pywt
 import pre_processing as pp
 
+def sample_subcarriers(args, CSI, freq_space=16):
+    """
+    現在的CSI(T=frames, M=8, K=2025)
+    BW=160MHz, K=2025, delta_f=78.125kHz
+
+    freq_space=16
+    BW=160MHz, K=2025//16=126, delta_f=1.269MHz
+    """
+    num_subc = CSI.shape[-1] # 原本是 2025
+    sampled_CSI = CSI[..., ::freq_space]
+    indices = np.arange(0, num_subc, freq_space)
+    sampled_CSI = CSI[..., indices]
+    actual_K = len(indices)
+    original_delta_f = args.BW / num_subc
+    new_delta_f = original_delta_f * freq_space
+    effective_BW = (actual_K - 1) * new_delta_f
+    if args is not None:
+        args.delta_f = new_delta_f
+
+    print(f"[Sampling] K: {actual_K} | Δf: {new_delta_f/1e6:.2f}MHz | BW: {effective_BW/1e6:.1f}MHz")
+
+    return sampled_CSI
+
 def plot_amp_DWT_components_time(
     CSI,
     tx_idx=0,
@@ -155,87 +178,6 @@ def MA(csi_amp, window_size):
     
     return np.apply_along_axis(lambda m: np.convolve(m, window, mode='same'), axis=0, arr=csi_amp)
 
-def rm_SFO_PDD(
-    CSI: np.ndarray,
-    delta_f: float = None,
-    center_x: bool = True,
-    tx: int = 0,
-    frames: np.ndarray = None,
-    return_info: bool = False,
-):
-    """
-    Offline batch RoArray Eq(24)(25)-style correction for ALL frames.
-
-    CSI: (T, Tx, Rx, Subc) complex
-    delta_f: subcarrier spacing (Hz). If provided, return tau_u per frame.
-    center_x: center subcarrier indices to improve numerical stability.
-    tx: which Tx to process (default 0). If you want all Tx, loop outside or adapt.
-    frames: optional frame indices to process. None => all frames.
-    return_info: if True, return dict with slope/intercept/tau_u arrays.
-
-    Returns
-    -------
-    CSI_corr : np.ndarray
-        Corrected CSI (same shape as input).
-    info : dict (optional)
-        slope[t], intercept[t], tau_u[t] (if delta_f provided)
-    """
-    CSI = np.asarray(CSI)
-    if CSI.ndim != 4:
-        raise ValueError(f"CSI must be 4D (T,Tx,Rx,Subc), got {CSI.shape}")
-
-    T, TxN, Nrx, Nsubc = CSI.shape
-    if tx < 0 or tx >= TxN:
-        raise ValueError(f"tx out of range: {tx}, TxN={TxN}")
-
-    if frames is None:
-        frames = np.arange(T)
-    else:
-        frames = np.asarray(frames)
-
-    # x-axis
-    k = np.arange(Nsubc, dtype=np.float64)
-    x = (k - k.mean()) if center_x else k
-    X = np.stack([x, np.ones_like(x)], axis=1)  # (Nsubc,2)
-
-    CSI_corr = CSI.copy()
-
-    slope_arr = np.zeros(T, dtype=np.float64)
-    intercept_arr = np.zeros(T, dtype=np.float64)
-    tau_arr = np.zeros(T, dtype=np.float64) if delta_f is not None else None
-
-    for t in frames:
-        H = CSI_corr[t, tx]  # (Nrx, Nsubc)
-
-        # unwrapped phase along subcarrier axis
-        phi = np.unwrap(np.angle(H), axis=1)
-
-        # stack all Rx samples for robust LS
-        A_ls = np.tile(X, (Nrx, 1))       # (Nrx*Nsubc,2)
-        b_ls = phi.reshape(-1)            # (Nrx*Nsubc,)
-
-        slope, intercept = np.linalg.lstsq(A_ls, b_ls, rcond=None)[0]
-        slope_arr[t] = slope
-        intercept_arr[t] = intercept
-
-        if delta_f is not None:
-            tau_arr[t] = -slope / (2*np.pi*delta_f)
-
-        # remove slope only (keep intercept)
-        phi_corr = phi - slope * x[None, :]
-        H_corr = np.abs(H) * np.exp(1j * phi_corr)
-
-        CSI_corr[t, tx] = H_corr
-
-    if not return_info:
-        return CSI_corr
-
-    info = {"slope": slope_arr, "intercept": intercept_arr}
-    if delta_f is not None:
-        info["tau_u"] = tau_arr
-    return CSI_corr, info
-    
-def remove_CFO(CSI, rx_slice=None, tx=0, eps=1e-12):
     """
     Remove per-frame common phase error (CPE), often dominated by residual CFO.
     CSI: (T, Tx, Rx, Subc) complex
