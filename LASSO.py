@@ -1,5 +1,5 @@
 import numpy as np
-import utils
+import MUSIC
 import Plot
 
 def build_dictionary(args, theta_min=-90, theta_max=90, theta_step=4, tau_min=0, tau_max=1.5e-8, tau_step=4e-10):
@@ -15,10 +15,14 @@ def build_dictionary(args, theta_min=-90, theta_max=90, theta_step=4, tau_min=0,
     G = len(theta_grid) * len(tau_grid)
     # Dictionary A
     A = np.zeros((L, G), dtype=np.complex128)
+    steering_vector = MUSIC.SteeringVector(args)
     idx = 0
     for i in theta_grid:
         for j in tau_grid:
-            v = np.kron(utils.steering_vector_AoA(i, args, args.num_Rx), utils.steering_vector_ToF(j, args, args.num_subcarriers))
+            v = np.kron(
+                steering_vector.steering_vector_AoA(i, args.num_Rx),
+                steering_vector.steering_vector_ToF(j, args.num_subcarriers, 1),
+            )
             A[:, idx] = v / (np.linalg.norm(v) + 1e-12)  # normalize columns
             idx += 1
     return A, theta_grid, tau_grid
@@ -36,10 +40,14 @@ def build_dictionary_adp(Nrx, Nsubc, args, thteta_min=-90, theta_max=90, theta_s
     G = len(theta_grid) * len(tau_grid)
     # Dictionary A
     A = np.zeros((L, G), dtype=np.complex128)
+    steering_vector = MUSIC.SteeringVector(args)
     idx = 0
     for i in theta_grid:
         for j in tau_grid:
-            v = np.kron(utils.steering_vector_AoA(i, args, args.num_Rx), utils.steering_vector_ToF(j, args, Nsubc))
+            v = np.kron(
+                steering_vector.steering_vector_AoA(i, args.num_Rx),
+                steering_vector.steering_vector_ToF(j, Nsubc, 1),
+            )
             A[:, idx] = v / (np.linalg.norm(v) + 1e-12)  # normalize columns
             idx += 1
     return A, theta_grid, tau_grid

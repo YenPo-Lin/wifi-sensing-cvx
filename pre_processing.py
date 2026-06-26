@@ -181,28 +181,56 @@ def MA(csi_amp, window_size):
     
     return np.apply_along_axis(lambda m: np.convolve(m, window, mode='same'), axis=0, arr=csi_amp)
 
+
+def PCA_time(CSI, window_size, k=3):
     """
-    Remove per-frame common phase error (CPE), often dominated by residual CFO.
-    CSI: (T, Tx, Rx, Subc) complex
-    subc_slice: 哪些 subcarriers 用來估 common phase
-    rx_slice: None=全部 Rx，或 slice/list 指定 Rx
-    Returns: CSI_corr (same shape), phi0 (T,) estimated common phase (rad)
+    對 frame 軸做滑動視窗 PCA，並以前 k 個主成分做低秩重建後回傳 CSI。
+
+    CSI shape: (T, Tx, Rx, Subc)
+    window_size: 時間窗長度，單位為 frames
+    k: 保留的主成分數
     """
-    CSI_corr = CSI.copy()
-    subc_slice = np.arange(CSI.shape[3])
-    H = CSI_corr[:, tx]  # (T, Rx, Subc)
-    
+    CSI = np.asarray(CSI)
 
-    if rx_slice is None:
-        H_sel = H[:, :, subc_slice]      # (T, Rx, K)
-    else:
-        H_sel = H[:, rx_slice, subc_slice]
+    if CSI.ndim != 4:
+        raise ValueError(f"Expected CSI shape (T, Tx, Rx, Subc), but got {CSI.shape}")
 
-    # 用複數平均的角度估每一 frame 的 common phase
-    # phi0[t] = angle( sum_{rx,subc} H_sel[t] )
-    z = np.sum(H_sel, axis=(1, 2))       # (T,)
-    phi0 = np.angle(z + eps)             # (T,)
+    window_size = int(round(window_size))
+    if window_size <= 0:
+        raise ValueError(f"window_size must be positive, but got {window_size}")
+    if k < 1:
+        raise ValueError(f"k must be at least 1, but got {k}")
 
-    # 每一 frame 整包乘上 exp(-j*phi0[t]) 去掉共同相位
-    CSI_corr[:, tx] = H * np.exp(-1j * phi0)[:, None, None]
-    return CSI_corr, phi0
+    T, Tx, Rx, Subc = CSI.shape
+    if T == 0:
+        return CSI.copy()
+
+    window_size = min(window_size, T)
+    feature_dim = Tx * Rx * Subc
+    flat_csi = CSI.reshape(T, feature_dim)
+
+    accum = np.zeros((T, feature_dim), dtype=np.complex128)
+    counts = np.zeros(T, dtype=np.float64)
+
+    for start in range(0, T - window_size + 1):
+        end = start + window_size
+        block = flat_csi[start:end]
+
+        mean = np.mean(block, axis=0, keepdims=True)
+        centered = block - mean
+
+        u, s, vh = np.linalg.svd(centered, full_matrices=False)
+        keep_k = min(int(k), s.size)
+
+        if keep_k > 0:
+            recon = (u[:, :keep_k] * s[:keep_k]) @ vh[:keep_k, :] + mean
+        else:
+            recon = np.repeat(mean, window_size, axis=0)
+
+        accum[start:end] += recon
+        counts[start:end] += 1.0
+
+    counts[counts == 0] = 1.0
+    recon_csi = accum / counts[:, None]
+
+    return recon_csi.reshape(T, Tx, Rx, Subc).astype(CSI.dtype, copy=False)

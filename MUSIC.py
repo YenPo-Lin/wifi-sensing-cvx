@@ -1,7 +1,6 @@
 import numpy as np
 import os
 from tqdm import tqdm
-import utils
 import Plot
 import matplotlib.pyplot as plt
 
@@ -57,9 +56,92 @@ def resolve_Sdim(args, eig_val, label="MUSIC"):
     Sdim = int(np.clip(Sdim, 1, M - 1))
     return Sdim
 
+class SteeringVector:
+    def __init__(self, args):
+        self.args = args
+        self.f_0 = args.f_0
+        self.projection = args.projection
+        self.antenna_spacing = args.antenna_spacing
+        self.stream_win = args.stream_win
+        self.freq_win = args.freq_win
+        self.freq_hop = args.freq_hop
+        self.dop_win = args.time_win
+        self.fs = args.fs
+        self.delta_f = float(getattr(args, "delta_f", args.BW / args.num_subcarriers))
+
+    def steering_vector_AoA(self, theta_i, stream_win=None):
+        if stream_win is None:
+            stream_win = self.stream_win
+
+        theta_i = np.deg2rad(theta_i)
+        if self.projection == "sin":
+            sv = np.exp(
+                +2j
+                * np.pi
+                * self.f_0
+                * np.sin(theta_i)
+                * self.antenna_spacing
+                / 3e8
+                * np.arange(stream_win)
+            )
+        elif self.projection == "cos":
+            sv = np.exp(
+                2j
+                * np.pi
+                * self.f_0
+                * (1 - np.cos(theta_i))
+                * self.antenna_spacing
+                / 3e8
+                * np.arange(stream_win)
+            )
+        else:
+            raise ValueError(f"Unsupported projection: {self.projection}")
+        return sv.flatten()
+
+    def steering_vector_ToF(self, tau_i, freq_win=None, freq_hop=None):
+        if freq_win is None:
+            freq_win = self.freq_win
+        if freq_hop is None:
+            freq_hop = self.freq_hop
+
+        row_size = freq_win // freq_hop
+        sub_idx = np.arange(0, row_size) * freq_hop
+        sv = np.exp(-2j * np.pi * (self.f_0 + self.delta_f * sub_idx) * tau_i)
+        return sv.flatten()
+
+    def steering_vector_AoA_ToF(self, theta_i, tau_j, stream_win=None, freq_win=None, freq_hop=None):
+        if stream_win is None:
+            stream_win = self.stream_win
+        if freq_win is None:
+            freq_win = self.freq_win
+        if freq_hop is None:
+            freq_hop = self.freq_hop
+
+        exp_phi = self.steering_vector_AoA(theta_i, stream_win)
+        exp_omega = self.steering_vector_ToF(tau_j, freq_win, freq_hop)
+        steering_vector = np.kron(exp_phi, exp_omega)
+        return steering_vector.flatten()
+
+    def steering_vector_ToF_Dop(self, tau, fd):
+        """
+        ToF-Doppler steering vector.
+        phase_tof = +2*pi*Δf*m*tau
+        phase_dop = -2*pi*fd*t/fs
+        sv = exp(-j * (phase_tof + phase_dop))
+
+        注意 flatten order = (subcarrier, time).reshape(-1)。
+        """
+        m_idx = np.arange(self.freq_win)[:, None]
+        t_idx = (np.arange(self.dop_win) / self.fs)[None, :]
+        phase_tof = 2 * np.pi * self.delta_f * m_idx * tau
+        phase_dop = -2 * np.pi * fd * t_idx
+        sv = np.exp(-1j * (phase_tof + phase_dop))
+        return sv.reshape(-1) / np.sqrt(self.freq_win * self.dop_win)
+
 class Azi_ToF:
     def __init__(self, args):
         self.args = args
+        self.steering_vector = SteeringVector(args)
         self.fs = args.fs
         self.avg_frames = args.avg_frames
         self.num_Rx = args.num_Rx
@@ -213,10 +295,9 @@ class Azi_ToF:
         Steering_Vectors = np.zeros((len(theta), len(tau), sv_len), dtype=complex)
         for i in range(len(theta)):
             for j in range(len(tau)):
-                sv = utils.steering_vector_AoA_ToF(
+                sv = self.steering_vector.steering_vector_AoA_ToF(
                     theta[i],
                     tau[j],
-                    self.args,
                     self.stream_win,
                     self.freq_win,
                     self.freq_hop,
@@ -257,6 +338,7 @@ class Azi_ToF:
 class ToF_Doppler:
     def __init__(self, args):
         self.args = args
+        self.steering_vector = SteeringVector(args)
         self.Sdim = getattr(args, "Sdim", None)
         self.num_Rx = getattr(args, "num_Rx", None)
         self.num_subcarriers = int(args.num_subcarriers)
@@ -274,11 +356,7 @@ class ToF_Doppler:
         self.fs = float(args.fs)
         self.tau_grid = np.arange(args.tau_min, args.tau_max, args.tau_step)
         self.fd_grid = np.arange(args.doppler_min, args.doppler_max + 0.5 * args.doppler_step, args.doppler_step)
-        if hasattr(args, "new_delta_f"):
-            self.new_delta_f = float(args.new_delta_f)
-        else:
-            base_delta_f = float(getattr(args, "delta_f", args.BW / args.num_subcarriers))
-            self.new_delta_f = base_delta_f * self.freq_space
+        self.delta_f = float(getattr(args, "delta_f", args.BW / args.num_subcarriers))
 
         self.epsilon = float(getattr(args, "tof_dop_epsilon", getattr(args, "epsilon", 1e-5)))
         self.tau_chunk = int(getattr(args, "tau_chunk", 12))
@@ -309,7 +387,6 @@ class ToF_Doppler:
                 f"time_sample_range={self.time_sample_range} cannot be smaller than "
                 f"time_win={self.dop_win}"
             )
-
 
     def sample_CSI_segment(self, CSI, frame_idx):
         total_frames = CSI.shape[0]
@@ -372,22 +449,6 @@ class ToF_Doppler:
         )
         return Rxx
 
-    def steering_vector_ToF_Dop(self, tau, fd):
-        """
-        ToF-Doppler steering vector.
-        phase_tof = +2*pi*Δf*m*tau
-        phase_dop = -2*pi*fd*t/fs
-        sv = exp(-j * (phase_tof + phase_dop))
-
-        注意 flatten order = (subcarrier, time).reshape(-1)。
-        """
-        m_idx = np.arange(self.freq_win)[:, None]
-        t_idx = (np.arange(self.dop_win) / self.fs)[None, :]
-        phase_tof = 2 * np.pi * self.new_delta_f * m_idx * tau
-        phase_dop = -2 * np.pi * fd * t_idx
-        sv = np.exp(-1j * (phase_tof + phase_dop))
-        return sv.reshape(-1) / np.sqrt(self.freq_win * self.dop_win)
-
     def steering_matrix_chunk(self, tau_chunk):
         A = np.empty(
             (len(tau_chunk) * len(self.fd_grid), self.freq_win * self.dop_win),
@@ -396,7 +457,7 @@ class ToF_Doppler:
         row = 0
         for tau in tau_chunk:
             for fd in self.fd_grid:
-                A[row] = self.steering_vector_ToF_Dop(tau, fd)
+                A[row] = self.steering_vector.steering_vector_ToF_Dop(tau, fd)
                 row += 1
         return A
 
@@ -431,32 +492,17 @@ class ToF_Doppler:
 
         return tau, fd, PP
 
-    def plot_heatmap(self, frame_idx, tau, fd, P_tof_dop, title="ToF-Doppler"):
-        P_tof_dop = 10 * np.log10(P_tof_dop + 1e-12)
-        P_tof_dop = P_tof_dop - np.nanmax(P_tof_dop)
-        vmin = max(np.nanpercentile(P_tof_dop, self.floor_percentile), -self.dynamic_range_db)
-        if abs(vmin) < 1e-9:
-            vmin = -1.0
-        tau_axis, tau_label = Plot._tof_axis_values_and_label(tau, self.args)
-
-        fig, ax = plt.subplots(figsize=(8, 6))
-        c = ax.pcolormesh(fd, tau_axis, P_tof_dop, cmap='jet', shading='auto', vmin=vmin, vmax=0.0)
-        fig.colorbar(c, ax=ax, label='Relative Power (dB)')
-        ax.axvline(0, color="white", linestyle="--", linewidth=1, alpha=0.6)
-        ax.set_xlabel('Doppler (fd) [Hz]')
-        ax.set_ylabel(tau_label)
-        if self.last_meta is None:
-            ax.set_title(f'{title} Heatmap @ Frame {frame_idx}')
-        else:
-            start, end = self.last_meta["context"]
-            ax.set_title(
-                f"{title} Heatmap @ Frame {frame_idx} "
-                f"(context {start}:{end}, {self.last_meta['num_snapshots']} snapshots)"
-            )
-
-        if hasattr(self.args, 'pics_dir') and self.args.pics_dir:
-            os.makedirs(self.args.pics_dir, exist_ok=True)
-            plt.savefig(os.path.join(self.args.pics_dir, f"{frame_idx:04d}_ToFDop_Heatmap.png"), dpi=150)
+    def plot_heatmap(self, frame_idx, tau, fd, P_tof_dop, title="MUSIC"):
+        Plot.plot_spectrum(
+            frame_idx,
+            tau,
+            fd,
+            P_tof_dop.T,
+            self.args,
+            title=title,
+            prefix="ToF-Doppler",
+            other_axis_label="Doppler (fd) [Hz]",
+        )
 
     def gen_spectrum(self, CSI, frame_idx):
         Rxx = self.Rxx_smooth(CSI, frame_idx)
