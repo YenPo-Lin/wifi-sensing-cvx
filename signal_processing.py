@@ -19,16 +19,16 @@ def signal_processing(raw_CSI, args):
         CSI  -= pp.MA(CSI, args.fs * 1.0)
         pass
     elif args.preprocess == "dwt":
-        CSI = pp.DWT_components(CSI, target_labels= ["D", "D5", "D4", "D3", "D2", "D"])
+        CSI = pp.DWT_components(CSI, target_labels= ["", "D5", "D4", "D3", "D2", ""])
     elif args.preprocess == "pca":
         CSI  -= pp.MA(CSI, args.fs * 0.5)
-        CSI = pp.PCA_time(CSI, args.fs * 1.0, k=3)
+        CSI = pp.PCA_time(CSI, args.fs *0.5, k=3)
 
     # Re sampling
     CSI = pp.sample_subcarriers(args, CSI, freq_space=args.freq_space)
 
     end_preprocessing = time.time()
-    print(f"Preprocessing Time: {end_preprocessing - start_preprocessing:.2f}s")
+    print(f"Preprocessing Method: {args.preprocess} | Time: {end_preprocessing - start_preprocessing:.2f}s")
 
 
 
@@ -41,34 +41,17 @@ def signal_processing(raw_CSI, args):
     tof_dop = MUSIC.ToF_Doppler(args)
     azi_tof = MUSIC.Azi_ToF(args)
 
-
-
     
-    frame_idx = 1666
+    frame_idx = 1550
 
     print(f"Processing Frame {frame_idx}... ")
 
     #_,_,_ = LASSO.gen_L2_LASSO_prob(CSI_dwt, args, frame_idx, Nrx=args.num_Rx, Nsubc=args.num_subcarriers, lam=args.lam)
 
-    #azi_tof.gen_MUSIC_spectrum(frame_idx, CSI)
-    #tof_dop.gen_spectrum(CSI, frame_idx)
-    start = time.time()
-    """
-    for i in range(1000, 1100, 10):
-        azi_tof.gen_spectrum(CSI, i)
-
-    etime = time.time() - start
-    print(f"Average Time per frame: {(etime/10):.2f} (s)")
-    """
-    start = time.time()
-    tof_dop.gen_spectrum(CSI, frame_idx)
-    etime = time.time() - start
-    print(f"Average ToF-Doppler Time per frame: {(etime/10):.2f} (s)")
-
-    start = time.time()
     azi_tof.gen_spectrum(CSI, frame_idx)
-    etime = time.time() - start
-    print(f"Average Azimuth-ToF Time per frame: {(etime/10):.2f} (s)")
+    #tof_dop.gen_spectrum(CSI, frame_idx)
+    LASSO.gen_L2_LASSO_prob(CSI, args, frame_idx)
+    LASSO.gen_MUSIC_weight_L2_LASSO_prob(CSI, args, frame_idx)
 
 
 

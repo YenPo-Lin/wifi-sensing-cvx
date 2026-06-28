@@ -25,7 +25,9 @@ def create_parser():
     
     # ---- MUSIC settings ----
     parser.add_argument('--preprocess', type=str, default='pca', choices=['ma', 'dwt', 'pca'])
-    parser.add_argument('--show_preprocessing_methods', type=bool, default=True)
+    parser.add_argument('--show_preprocessing_methods', type=bool, default=False)
+    # plotted frame
+    parser.add_argument('--frame_idx', type=int, default=100)
     # MUSIC signal dimension
     parser.add_argument('--Sdim', type=int, default=None)
     parser.add_argument('--Sdim_energy_ratio', type=float, default=0.77)
@@ -35,8 +37,8 @@ def create_parser():
     parser.add_argument('--stream_win', type=int, default=5)
     parser.add_argument('--stream_sample_range', type=int, default=8) #all Rx
 
-    parser.add_argument('--freq_win', type=int, default=44) #block size = freq_win // freq_hop
-    parser.add_argument('--freq_hop', type=int, default=2)
+    parser.add_argument('--freq_win', type=int, default=48) #block size = freq_win // freq_hop
+    parser.add_argument('--freq_hop', type=int, default=3)
     parser.add_argument('--freq_sample_range', type=int, default=64) #all subcarriers
     parser.add_argument('--freq_space', type=int, default=1) # if freq resampling
 
@@ -50,7 +52,7 @@ def create_parser():
     parser.add_argument('--theta_max', type=float, default= 60)
     parser.add_argument('--theta_step', type=int, default=3)
     # Time of Flight grid
-    parser.add_argument('--axis', type=str, default='m', choices=['ns', 'm'])
+    parser.add_argument('--axis', type=str, default='ns', choices=['ns', 'm'])
     parser.add_argument('--tau_min', type=float, default=2e-9)
     parser.add_argument('--tau_max', type=float, default=20e-9)
     parser.add_argument('--tau_step', type=float, default=3e-10)
@@ -61,18 +63,25 @@ def create_parser():
 
     # heatmap axis (X: Azi, Y: TOF if True)
     parser.add_argument('--axis_flip', type=bool, default=True)
-    parser.add_argument('--colorbar', type=bool, default=False)
+    parser.add_argument('--colorbar', type=bool, default=True)
     
     
     # ---- 圖片保存路徑 ----
     parser.add_argument('--pics_dir', type=str, default=None)
     
     # ---- L2 LASSO 設置 ----
-    parser.add_argument('--energy_thresh', type=float, default=0.98)
-    parser.add_argument('--multi_frame', type=int, default=11)
+    parser.add_argument('--svd_frames', type=int, default=11)
+
     parser.add_argument('--max_iter', type=int, default=3000)
-    parser.add_argument('--tol', type=float, default=5e-3)
-    parser.add_argument('--lam', type=float, default=0.4)
+    parser.add_argument('--tol', type=float, default=8e-2)
+    parser.add_argument('--lam', type=float, default=0.3)
+
+    parser.add_argument('--music_reweight_alpha', type=float, default=0.6)
+
+    parser.add_argument('--lasso_azi_step', type=float, default=3)
+    parser.add_argument('--lasso_tau_step', type=float, default=3e-10)
+    parser.add_argument('--lasso_doppler_step', type=float, default=3)
+    
     
     return parser
 

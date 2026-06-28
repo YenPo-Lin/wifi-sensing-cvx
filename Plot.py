@@ -22,15 +22,15 @@ def _tof_axis_values_and_label(tau, args):
     return tau * 1e9, "ToF (ns)"
 
 
-def plot_spectrum(frame_idx, tau, theta, P_music, args, title="", prefix="Azi-ToF", other_axis_label="theta (deg)"):
+def plot_spectrum(frame_idx, tau, theta, P_music, args, title="", cmap='jet'):
     #peaks = find_Peaks.find_AoA_ToF_peaks(P_music, theta, tau)
     tau_axis, tau_label = _tof_axis_values_and_label(tau, args)
     axis_flip = getattr(args, "axis_flip", False)
     plt.figure()
     if axis_flip:
-        plt.pcolormesh(theta, tau_axis, P_music.T, cmap='jet', shading='auto')
+        plt.pcolormesh(theta, tau_axis, P_music.T, cmap=cmap, shading='auto')
     else:
-        plt.pcolormesh(tau_axis, theta, P_music, cmap='jet', shading='auto')
+        plt.pcolormesh(tau_axis, theta, P_music, cmap=cmap, shading='auto')
     if args.colorbar:
         plt.colorbar()
     '''
@@ -47,12 +47,12 @@ def plot_spectrum(frame_idx, tau, theta, P_music, args, title="", prefix="Azi-To
     plt.grid(which='minor', color='w', linestyle='-', linewidth=0.5, alpha=0.2)
 
     if axis_flip:
-        plt.xlabel(other_axis_label)
+        plt.xlabel('theta (deg)')
         plt.ylabel(tau_label)
     else:
         plt.xlabel(tau_label)
-        plt.ylabel(other_axis_label)
-    plt.title(prefix + ' ' + title + ' @ frame ' + str(frame_idx), fontsize = 8)
+        plt.ylabel('theta (deg)')
+    plt.title(title + ' @ frame ' + str(frame_idx), fontsize = 8)
 
     # --- save figures ---
     save_dir = args.pics_dir

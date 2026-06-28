@@ -24,6 +24,7 @@ def sample_subcarriers(args, CSI, freq_space=16):
     effective_BW = (actual_K - 1) * new_delta_f
     if args is not None:
         args.delta_f = new_delta_f
+        args.num_subcarriers = actual_K
 
     print(f"[Sampling] K: {actual_K} | Δf: {new_delta_f/1e6:.2f}MHz | BW: {effective_BW/1e6:.1f}MHz")
 
@@ -180,7 +181,6 @@ def MA(csi_amp, window_size):
     window = np.ones(window_size) / window_size
     
     return np.apply_along_axis(lambda m: np.convolve(m, window, mode='same'), axis=0, arr=csi_amp)
-
 
 def PCA_time(CSI, window_size, k=3):
     """

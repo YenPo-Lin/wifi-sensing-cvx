@@ -201,13 +201,11 @@ class Azi_ToF:
                 f"stream_sample_range={self.stream_sample_range}"
             )
 
-    def gen_spectrum(self, CSI, frame_idx, avg=True, title="MUSIC"):
-        x = self.cal_smoothed_csi(frame_idx, CSI, avg)
-        x_cov = self.cal_smoothed_cov(x)
-        tau_x, theta_x, P_music_x = self.cal_spectrum(x_cov)
-
-        #Plot.save_as_mat(tau_x, theta_x, P_music_x, frame_idx)
-        Plot.plot_spectrum(frame_idx, tau_x, theta_x, P_music_x, self.args, title=title)
+    def gen_spectrum(self, CSI, frame_idx):
+        x = self.cal_smoothed_csi(frame_idx, CSI)
+        Rxx = self.cal_smoothed_cov(x)
+        tau_x, theta_x, P_music_x = self.cal_spectrum(Rxx)
+        Plot.plot_spectrum(frame_idx, tau_x, theta_x, P_music_x, self.args, title="Azi-ToF")
 
     def smooth_csi(self, csi):
         """
@@ -229,18 +227,12 @@ class Azi_ToF:
         ])
         return smoothed_csi
 
-    def cal_smoothed_csi(self, frame_idx, CSI, avg=True):
+    def cal_smoothed_csi(self, frame_idx, CSI):
             smoothed_CSIs = []
-            if avg:
-                avg_frames = self.avg_frames
-                for i in range(avg_frames):
-                    smoothed_csi = self.smooth_csi(CSI[frame_idx -avg_frames//2 + i])
-                    smoothed_CSIs.append(smoothed_csi)
-
-            else:
-                smoothed_csi = self.smooth_csi(CSI[frame_idx])
+            avg_frames = self.avg_frames
+            for i in range(avg_frames):
+                smoothed_csi = self.smooth_csi(CSI[frame_idx -avg_frames//2 + i])
                 smoothed_CSIs.append(smoothed_csi)
-            
 
             return np.array(smoothed_CSIs)
 
@@ -330,7 +322,7 @@ class Azi_ToF:
         PP = PP_flat.reshape(len(theta), len(tau))
 
         # 5) MUSIC spectrum
-        P_music = 10 * np.log10(1.0 / PP)
+        P_music = 10 * np.log10(1.0 / PP + 1e-12)
 
         return tau, theta, P_music
 
@@ -492,21 +484,9 @@ class ToF_Doppler:
 
         return tau, fd, PP
 
-    def plot_heatmap(self, frame_idx, tau, fd, P_tof_dop, title="MUSIC"):
-        Plot.plot_spectrum(
-            frame_idx,
-            tau,
-            fd,
-            P_tof_dop.T,
-            self.args,
-            title=title,
-            prefix="ToF-Doppler",
-            other_axis_label="Doppler (fd) [Hz]",
-        )
-
     def gen_spectrum(self, CSI, frame_idx):
         Rxx = self.Rxx_smooth(CSI, frame_idx)
         if Rxx is None:
             return
         tau, fd, P_tof_dop = self.cal_spectrum(Rxx)
-        self.plot_heatmap(frame_idx, tau, fd, P_tof_dop)
+        Plot.plot_spectrum(frame_idx, tau, fd, P_tof_dop.T, self.args, title="ToF-Doppler")

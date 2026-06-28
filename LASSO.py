@@ -2,144 +2,179 @@ import numpy as np
 import MUSIC
 import Plot
 
-def build_dictionary(args, theta_min=-90, theta_max=90, theta_step=4, tau_min=0, tau_max=1.5e-8, tau_step=4e-10):
-    # theta candidate
-    theta_grid = np.arange(args.theta_min, args.theta_max + 1, args.theta_step) #181 points
+def build_overcomplete_dictionary(args):
 
-    # tau candidate
-    tau_grid =np.arange(args.tau_min, args.tau_max, args.tau_step) # 40 points
+    theta_grid = np.arange(args.theta_min, args.theta_max + 1, args.lasso_azi_step)
+    tau_grid = np.arange(args.tau_min, args.tau_max, args.lasso_tau_step)
 
-
+    G = len(theta_grid) * len(tau_grid)
     L = args.num_Rx * args.num_subcarriers
-    #print(f"θ grid size: {len(theta_grid)},  τ grid size: {len(tau_grid)}")
-    G = len(theta_grid) * len(tau_grid)
-    # Dictionary A
     A = np.zeros((L, G), dtype=np.complex128)
     steering_vector = MUSIC.SteeringVector(args)
+
     idx = 0
-    for i in theta_grid:
-        for j in tau_grid:
-            v = np.kron(
-                steering_vector.steering_vector_AoA(i, args.num_Rx),
-                steering_vector.steering_vector_ToF(j, args.num_subcarriers, 1),
+    for theta_i in theta_grid:
+        for tau_i in tau_grid:
+            v = steering_vector.steering_vector_AoA_ToF(
+                theta_i,
+                tau_i,
+                stream_win= args.num_Rx,
+                freq_win= args.num_subcarriers,
+                freq_hop= 1,
             )
-            A[:, idx] = v / (np.linalg.norm(v) + 1e-12)  # normalize columns
+            A[:, idx] = v / (np.linalg.norm(v) + 1e-12)
             idx += 1
     return A, theta_grid, tau_grid
 
-def build_dictionary_adp(Nrx, Nsubc, args, thteta_min=-90, theta_max=90, theta_step=3, tau_min=0, tau_max=2.5e-8, tau_step=4e-10):
-    # theta candidate
-    theta_grid = np.arange(thteta_min, theta_max + 1, theta_step) #181 points
-
-    # tau candidate
-    tau_grid =np.arange(tau_min, tau_max + 1e-12, tau_step) # 40 points
-
-
-    L = Nrx * Nsubc
-    #print(f"θ grid size: {len(theta_grid)},  τ grid size: {len(tau_grid)}")
-    G = len(theta_grid) * len(tau_grid)
-    # Dictionary A
-    A = np.zeros((L, G), dtype=np.complex128)
-    steering_vector = MUSIC.SteeringVector(args)
-    idx = 0
-    for i in theta_grid:
-        for j in tau_grid:
-            v = np.kron(
-                steering_vector.steering_vector_AoA(i, args.num_Rx),
-                steering_vector.steering_vector_ToF(j, Nsubc, 1),
-            )
-            A[:, idx] = v / (np.linalg.norm(v) + 1e-12)  # normalize columns
-            idx += 1
-    return A, theta_grid, tau_grid
-
-def build_Y_packets(CSI, frame_idx, Nsubc, K_frame=11):
-    if K_frame > 1:
-        # 取 frame_idx 前後各 K//2 個（可自行改成只取往前）
-        half = K_frame // 2
-        idxs = np.arange(frame_idx - half, frame_idx + half + 1)
-        idxs = idxs[(idxs >= 0) & (idxs < CSI.shape[0])]
-
-        Ys = []
-        for t in idxs:
-            y = np.mean(CSI[t-10:t+10, 0, :, 0:Nsubc], axis=0).reshape(-1)   
-            y = y / (np.linalg.norm(y) + 1e-12)
-            Ys.append(y)
-        Y = np.stack(Ys, axis=1)   # shape: (L, K_eff)
-        return Y
-    elif K_frame == 1:
-        y = CSI[frame_idx, 0, :, 0:Nsubc].reshape(-1)
-        y = y / (np.linalg.norm(y) + 1e-12)
-        return y.reshape(-1)
-    else:
+def build_Y_packets(CSI, frame_idx, avg_frames, svd_frames):
+    if svd_frames < 1:
         raise ValueError("K_frame must be >= 1")
-  
-def gen_L1_LASSO_prob(CSI, args, frame_idx, Nrx, Nsubc, lam=0.1):
 
-    A, theta_grid, tau_grid = build_dictionary(args)
-    y = build_Y_packets(CSI, frame_idx, Nsubc, K_frame=1)
-    print(f"CSI vec size: {len(y)}, θ grid size: {len(theta_grid)},  τ grid size: {len(tau_grid)}")
+    num_frames = CSI.shape[0]
+    if not (0 <= frame_idx < num_frames):
+        raise IndexError(f"frame_idx out of range: {frame_idx}, num_frames={num_frames}")
 
-    # CVXPY
-    print("🐌 Solving CVXPY... ")
-    #x_cvx, _ = LASSOResult.solve_L1_LASSO_cvx(A, y, lam, solver="SCS", eps=1e-5, max_iter=3000, verbose=True)
-    x_cvx = FISTA.FISTA_Lasso(A, y, lam, max_iter=3000, tol=1e-3, verbose=True)
-    x_cvx = np.abs(x_cvx).reshape(len(theta_grid), len(tau_grid))
+    avg_frames = max(1, int(avg_frames))
+    svd_frames = max(1, int(svd_frames))
 
-    Plot.save_as_mat(tau_grid, theta_grid, x_cvx, frame_idx)
+    half_snapshots = svd_frames // 2
+    frame_indices = np.arange(frame_idx - half_snapshots, frame_idx + half_snapshots + 1)
+    frame_indices = frame_indices[(frame_indices >= 0) & (frame_indices < num_frames)]
 
+    avg_half = avg_frames // 2
+    Ys = []
+    for t in frame_indices:
+        start = max(0, t - avg_half)
+        end = min(num_frames, t + avg_half + 1)
+        y = np.mean(CSI[start:end, 0, :, :], axis=0).reshape(-1)
+        y = y / (np.linalg.norm(y) + 1e-12)
+        Ys.append(y)
 
+    if len(Ys) == 1:
+        return Ys[0]
+    return np.stack(Ys, axis=1)
 
-    Plot.plot_spectrum(frame_idx, tau_grid, theta_grid, x_cvx, args, title=f"CVXPY lam={lam}")
+def gen_L2_LASSO_prob(CSI, args, frame_idx):
 
-def gen_L2_LASSO_prob(CSI, args, frame_idx, Nrx, Nsubc, lam=0.1):
-
-    A, theta_grid, tau_grid = build_dictionary(args)
-    Y = build_Y_packets(CSI, frame_idx, Nsubc, K_frame=args.multi_frame)
+    A, theta_grid, tau_grid = build_overcomplete_dictionary(args)
+    Y = build_Y_packets(
+        CSI,
+        frame_idx,
+        avg_frames= args.avg_frames, # 每一個 snapshot 的平均(denoising)
+        svd_frames= args.svd_frames, # number of snapshots for SVD
+    )
+    if Y.ndim == 1:
+        Y = Y[:, None]
 
     # --- SVD & Dynamic K Selection ---
-    print(f"Y.shape before SVD {Y.shape}")
+    # print(f"Y.shape before SVD {Y.shape}") (num_Rx * num_subcarriers, K)
     U, S, Vh = np.linalg.svd(Y, full_matrices=False)
-    # 方法 1: 使用能量比例
-    energy_thresh = args.energy_thresh
+    N_subc = args.num_subcarriers
+    N_rx = args.num_Rx
+    # 使用能量比例
+    energy_thresh = args.Sdim_energy_ratio
     S_sq = S**2
     K_subspace = np.searchsorted(np.cumsum(S_sq), np.sum(S_sq) * energy_thresh) + 1
-    K_subspace = np.clip(K_subspace, 2, 10)
+    K_subspace = np.clip(K_subspace, 1, min(Y.shape[1], 10))
     print(f"Dynamically selected K={K_subspace} (Energy Thresh={energy_thresh})")
 
     Y = U[:, :K_subspace] @ np.diag(S[:K_subspace])
-    print(f"Y.shape after SVD{Y.shape}")
+    print(f"Y.shape after SVD{Y.shape}") #(num_Rx * num_subcarriers, ?)
     
 
     print("🐌 Solving Group L2 Lasso... ")
 
-    X_cvx = FISTA.FISTA_group_Lasso(A, Y, lam, max_iter=args.max_iter, tol=args.tol, verbose=True)
+    X_cvx = FISTA.FISTA_group_Lasso(A, Y, args.lam, max_iter=args.max_iter, tol=args.tol, verbose=True)
     # X_cvx.shape(G * K)
     X_cvx = np.linalg.norm(X_cvx, axis=1)
     X_cvx = np.abs(X_cvx).reshape(len(theta_grid), len(tau_grid))
 
-    pad_theta = 2  # 角度軸邊界
-    pad_tau = 2    # 延遲軸邊界
-    
-    # 將邊緣設為 0
-    X_cvx[:pad_theta, :] = 0  # 上邊界
-    X_cvx[-pad_theta:, :] = 0 # 下邊界
-    X_cvx[:, :pad_tau] = 0    # 左邊界
-    X_cvx[:, -pad_tau:] = 0   # 右邊界
-
-    #Plot.save_as_mat(tau_grid, theta_grid, X_cvx, frame_idx)
-
-    Plot.plot_spectrum(frame_idx, tau_grid, theta_grid, X_cvx, args, title=f"Group Lasso lam={lam}")
+    Plot.plot_spectrum(frame_idx, tau_grid, theta_grid, X_cvx, args, title=f"Group Lasso λ {args.lam}")
 
     return X_cvx, theta_grid, tau_grid
 
-def reconstruct(A, x_esti, peaks_i, theta_grid, tau_grid, radius=1):
-    idx_theta, idx_tau, _, _, _ = peaks_i
-    x_top = np.zeros_like(x_esti)
-    for i in range(max(0, idx_theta - radius), min(len(theta_grid), idx_theta + radius+1)):
-        for j in range(max(0, idx_tau - radius), min(len(tau_grid), idx_tau + radius+1)):
-            idx2 = i * len(tau_grid) + j
-            x_top[idx2] = x_esti[idx2]
-    return A @ x_top
+def gen_MUSIC_weight_L2_LASSO_prob(CSI, args, frame_idx):
+
+    # Run MUSIC first
+    music = MUSIC.Azi_ToF(args)
+    x = music.cal_smoothed_csi(frame_idx, CSI)
+    Rxx = music.cal_smoothed_cov(x)
+    tau_x, theta_x, P_music_x = music.cal_spectrum(Rxx)
+
+    # print(P_music_x.shape) (azi_grid x tau_grid)
+    # P_music = 10 * np.log10(1.0 / PP)
+    # Return to Linear Scale
+    P_music_x = 10.0 ** (P_music_x / 10.0)
+    # Normalize
+    P_music_x = P_music_x / (np.max(P_music_x) + 1e-12)
+    # MUSIC strong -> small penalty, weak -> large penalty
+    weight_map = (1.0 / (P_music_x + 1e-6)) ** args.music_reweight_alpha
+    # Average to 1
+    weight_map = weight_map / (np.mean(weight_map) + 1e-12)
+    Plot.plot_spectrum(frame_idx, tau_x, theta_x, weight_map, args, cmap="gray", title="MUSIC weight map")
+
+    # flatten
+    w = weight_map.reshape(-1)
+
+    if args.lasso_azi_step != args.theta_step:
+        raise ValueError("theta_step and lasso_azi_step must be the same")
+    if args.lasso_tau_step != args.tau_step:
+        raise ValueError("tau_step and lasso_tau_step must be the same")
+
+
+    A, theta_grid, tau_grid = build_overcomplete_dictionary(args)
+    Y = build_Y_packets(
+        CSI,
+        frame_idx,
+        avg_frames= args.avg_frames, # 每一個 snapshot 的平均(denoising)
+        svd_frames= args.svd_frames, # number of snapshots for SVD
+    )
+    if Y.ndim == 1:
+        Y = Y[:, None]
+
+    # --- SVD & Dynamic Selection ---
+    # print(f"Y.shape before SVD {Y.shape}") (num_Rx * num_subcarriers, K)
+    U, S, Vh = np.linalg.svd(Y, full_matrices=False)
+    # 使用能量比例
+    energy_thresh = args.Sdim_energy_ratio
+    S_sq = S**2
+    K_subspace = np.searchsorted(np.cumsum(S_sq), np.sum(S_sq) * energy_thresh) + 1
+    K_subspace = np.clip(K_subspace, 1, min(Y.shape[1], 10))
+    print(f"Dynamically selected K={K_subspace} (Energy Thresh={energy_thresh})")
+
+    Y = U[:, :K_subspace] @ np.diag(S[:K_subspace])
+    print(f"Y.shape after SVD{Y.shape}") #(num_Rx * num_subcarriers, ?)
+    
+
+    print("🐌 Solving Group L2 Lasso... ")
+
+    X_cvx = FISTA.FISTA_group_Lasso(
+        A,
+        Y,
+        args.lam,
+        weights=w,
+        max_iter=args.max_iter,
+        tol=args.tol,
+        verbose=True,
+    )
+    # X_cvx.shape(G * K)
+    X_cvx = np.linalg.norm(X_cvx, axis=1)
+    X_cvx = np.abs(X_cvx).reshape(len(theta_grid), len(tau_grid))
+
+    X_cvx[0, :] = 0
+    X_cvx[-1, :] = 0
+    X_cvx[:, 0] = 0
+    X_cvx[:, -1] = 0
+
+    Plot.plot_spectrum(
+        frame_idx, 
+        tau_grid, 
+        theta_grid, 
+        X_cvx, 
+        args, 
+        title=f"Weighted Group Lasso λ {args.lam}, α{args.music_reweight_alpha}")
+
+    return X_cvx, theta_grid, tau_grid
 
 class FISTA:
     @staticmethod
@@ -242,14 +277,19 @@ class FISTA:
         return s
     
     @staticmethod
-    def prox_op_group(Z, thr):
+    def prox_op_group(Z, thr, weights=None):
         # Z: (G, K)
         # thr = lam / L
         row_norm = np.linalg.norm(Z, axis=1, keepdims=True) + 1e-12
-        return np.maximum(0.0, 1.0 - thr / row_norm)* Z
+        if weights is None:
+            thr_vec = thr
+        else:
+            weights = np.asarray(weights, dtype=float).reshape(-1, 1)
+            thr_vec = thr * weights
+        return np.maximum(0.0, 1.0 - thr_vec / row_norm) * Z
 
     @staticmethod
-    def FISTA_group_Lasso(A, Y, lam=0.1, max_iter=1000, tol=1e-5, verbose=True):
+    def FISTA_group_Lasso(A, Y, lam=0.1, weights=None, max_iter=1000, tol=1e-5, verbose=True):
         """
         Solve: min_X 0.5||AX - Y||_F^2 + lam * sum_i ||X_i||_2
         A: (L, G) complex
@@ -259,6 +299,10 @@ class FISTA:
         L = FISTA.estimate_max_eigenval(A)  # Lipschitz constant of grad (A^H A)
         G = A.shape[1]
         K = Y.shape[1]
+        if weights is not None:
+            weights = np.asarray(weights, dtype=float).reshape(-1)
+            if weights.shape[0] != G:
+                raise ValueError(f"weights length must be {G}, got {weights.shape[0]}")
         X = np.zeros((G, K), dtype=np.complex128)
         Z = X.copy()
         t = 1.0
@@ -267,7 +311,7 @@ class FISTA:
         for it in range(max_iter):
             # grad of 0.5||AZ - Y||_F^2 is A^H(AZ - Y)
             grad = A.conj().T @ (A @ Z - Y)
-            X_new = FISTA.prox_op_group(Z - (1.0 / L) * grad, (1.0 / L) * lam)
+            X_new = FISTA.prox_op_group(Z - (1.0 / L) * grad, (1.0 / L) * lam, weights=weights)
 
             t_new = 0.5 * (1 + np.sqrt(1 + 4 * t * t))
             Z = X_new + ((t - 1) / t_new) * (X_new - X)
@@ -279,7 +323,11 @@ class FISTA:
 
             if verbose and (it % 250 == 0 or it == max_iter - 1):
                 data = 0.5 * np.linalg.norm(A @ X - Y, 'fro')**2
-                reg = lam * np.sum(np.linalg.norm(X, axis=1))
+                row_norm = np.linalg.norm(X, axis=1)
+                if weights is None:
+                    reg = lam * np.sum(row_norm)
+                else:
+                    reg = lam * np.sum(weights * row_norm)
                 obj = data + reg
                 if prev_obj is None:
                     print(f"[{it:4d}] rel={rel:.3e}, obj={obj:.6e}")
