@@ -30,14 +30,14 @@ def create_parser():
     parser.add_argument('--frame_idx', type=int, default=100)
     # MUSIC signal dimension
     parser.add_argument('--Sdim', type=int, default=None)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.87)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.33)
     parser.add_argument('--avg_frames', type=int, default=50)
     parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
     parser.add_argument('--stream_win', type=int, default=5)
     parser.add_argument('--stream_sample_range', type=int, default=8) #all Rx
 
-    parser.add_argument('--freq_win', type=int, default=48) #block size = freq_win // freq_hop
+    parser.add_argument('--freq_win', type=int, default=30) #block size = freq_win // freq_hop
     parser.add_argument('--freq_hop', type=int, default=3)
     parser.add_argument('--freq_sample_range', type=int, default=64) #all subcarriers
     parser.add_argument('--freq_space', type=int, default=1) # if freq resampling
@@ -71,7 +71,7 @@ def create_parser():
     
     
     # ---- 圖片保存路徑 ----
-    parser.add_argument('--pics_dir', type=str, default="20260821-125845_big_swing")
+    parser.add_argument('--pics_dir', type=str, default=None)
     
     # ---- L2 LASSO 設置 ----
     parser.add_argument('--svd_frames', type=int, default=11)

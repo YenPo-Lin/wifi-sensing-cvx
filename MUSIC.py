@@ -150,7 +150,6 @@ class SteeringVector:
         steering_vector = np.kron(exp_phi, exp_dop)
         return steering_vector.flatten() / np.sqrt(stream_win * dop_win)
 
-
 class Azi_ToF:
     def __init__(self, args):
         self.args = args
@@ -348,9 +347,7 @@ class Azi_ToF:
 
         return tau, theta, P_music
 
-
-
-class ToF_Doppler:
+class ToF_Dop:
     def __init__(self, args):
         self.args = args
         self.steering_vector = SteeringVector(args)
@@ -522,7 +519,6 @@ class ToF_Doppler:
             x_axis=x_axis,
             y_axis=y_axis,
         )
-
 
 class Azi_Dop:
     def __init__(self, args):
@@ -697,5 +693,489 @@ class Azi_Dop:
             file_suffix="azi_doppler",
         )
 
+class Azi_DopX:
+    def __init__(self, args):
+        self.args = args
+        self.steering_vector = SteeringVector(args)
+        self.Sdim = getattr(args, "Sdim", None)
+        
+        # Window sizes for smoothing
+        self.stream_win = int(args.stream_win)
+        self.dop_win = int(args.time_win)
+        
+        # Sample ranges
+        self.stream_sample_range = int(min(args.stream_sample_range, args.num_Rx))
+        self.freq_sample_range = int(
+            min(getattr(args, "freq_sample_range", args.num_subcarriers), args.num_subcarriers)
+        )
+        self.time_sample_range = int(
+            max(getattr(args, "time_sample_range", self.dop_win), self.dop_win)
+        )
+        
+        # Hops/Strides
+        self.time_hop = max(1, int(getattr(args, "time_hop", 1)))
+        
+        self.fs = float(args.fs)
+        
+        # Resolution Grids
+        self.theta = np.arange(args.theta_min, args.theta_max + 1, args.theta_step)
+        self.fd_grid = np.arange(
+            args.doppler_min,
+            args.doppler_max + 0.5 * args.doppler_step,
+            args.doppler_step,
+        )
+        
+        self.snapshot_norm = bool(getattr(args, "azi_dop_snapshot_norm", True))
+        self.epsilon = float(getattr(args, "azi_dop_epsilon", 1e-12))
+        self.last_meta = None
 
+        # Validation
+        if self.stream_sample_range <= 0:
+            raise ValueError(f"stream_sample_range must be positive, got {self.stream_sample_range}")
+        if self.freq_sample_range <= 0:
+            raise ValueError(f"freq_sample_range must be positive, got {self.freq_sample_range}")
+        if self.stream_win <= 0:
+            raise ValueError(f"stream_win must be positive, got {self.stream_win}")
+        if self.stream_win > self.stream_sample_range:
+            raise ValueError(f"stream_win={self.stream_win} cannot exceed stream_sample_range={self.stream_sample_range}")
+        if self.dop_win <= 0:
+            raise ValueError(f"time_win must be positive, got {self.dop_win}")
+        if self.time_sample_range < self.dop_win:
+            raise ValueError(f"time_sample_range={self.time_sample_range} cannot be smaller than time_win={self.dop_win}")
+
+    def sample_CSI_segment(self, CSI, frame_idx):
+        total_frames = CSI.shape[0]
+        context_len = min(self.time_sample_range, total_frames)
+        frame_idx = int(np.clip(frame_idx, 0, total_frames - 1))
+        start = int(np.clip(frame_idx - context_len // 2, 0, total_frames - context_len))
+        end = start + context_len
+        return CSI[start:end], start, end
+
+    def Rxx_smooth(self, CSI, frame_idx):
+        csi_segment, start, end = self.sample_CSI_segment(CSI, frame_idx)
+        csi_segment = csi_segment[:, :, :self.stream_sample_range, :self.freq_sample_range]
+        context_len, num_tx, num_rx, num_subc = csi_segment.shape
+
+        if context_len < self.dop_win:
+            print(f"Warning: Not enough samples for Azi-Doppler smoothing at {frame_idx}")
+            return None
+
+        csi_segment = np.asarray(csi_segment, dtype=np.complex128)
+        # 注意：已依需求移除 csi_segment 的 DC Mean Subtraction，保留靜態反射訊號
+        
+        taper = np.hanning(self.dop_win)[None, :]
+
+        time_starts = np.arange(0, context_len - self.dop_win + 1, self.time_hop)
+        stream_starts = np.arange(0, num_rx - self.stream_win + 1)
+        total_snapshots = num_tx * num_subc * len(stream_starts) * len(time_starts)
+        sv_len = self.stream_win * self.dop_win
+        X = np.empty((sv_len, total_snapshots), dtype=np.complex128)
+
+        idx = 0
+        for tx in range(num_tx):
+            for subc in range(num_subc):
+                for stream_start in stream_starts:
+                    stream_end = stream_start + self.stream_win
+                    for time_start in time_starts:
+                        time_end = time_start + self.dop_win
+                        block = csi_segment[
+                            time_start:time_end,
+                            tx,
+                            stream_start:stream_end,
+                            subc,
+                        ]
+                        # block 轉置以對齊 Kronecker 的展平順序 (stream, time)
+                        v = (block.T * taper).reshape(-1)
+                        if self.snapshot_norm:
+                            v = v / (np.linalg.norm(v) + 1e-12)
+                        X[:, idx] = v
+                        idx += 1
+
+        Rxx = (X @ X.conj().T) / max(idx, 1)
+        Rxx = (Rxx + Rxx.conj().T) / 2.0
+        
+        self.last_meta = {
+            "context": (start, end),
+            "num_tx": num_tx,
+            "num_rx": num_rx,
+            "num_subc": num_subc,
+            "num_stream_slides": len(stream_starts),
+            "num_time_slides": len(time_starts),
+            "num_snapshots": idx,
+            "vec_len": sv_len,
+        }
+        print(
+            f"Azi-Dop Rxx: {Rxx.shape}, snapshots={idx}, "
+            f"context={start}:{end}, stream_slides={len(stream_starts)}, "
+            f"time_slides={len(time_starts)}"
+        )
+        return Rxx
+
+    def steering_matrix(self, theta, fd):
+        """
+        利用 NumPy 張量運算完全向量化導向矩陣，大幅取代雙層 for 迴圈
+        """
+        theta_rad = np.deg2rad(theta)
+        spacing = self.steering_vector.antenna_spacing
+        f0 = self.steering_vector.f_0
+        
+        # 1. 產生 AoA 維度相位
+        if self.args.projection == "sin":
+            exp_phi = np.exp(
+                2j * np.pi * f0 * np.sin(theta_rad)[:, None] 
+                * spacing / 3e8 
+                * np.arange(self.stream_win)[None, :]
+            )
+        elif self.args.projection == "cos":
+            exp_phi = np.exp(
+                2j * np.pi * f0 * (1 - np.cos(theta_rad))[:, None] 
+                * spacing / 3e8 
+                * np.arange(self.stream_win)[None, :]
+            )
+        else:
+            raise ValueError(f"Unsupported projection: {self.args.projection}")
+
+        # 2. 產生 Doppler 維度相位
+        t_idx = np.arange(self.dop_win) / self.fs
+        exp_dop = np.exp(1j * 2 * np.pi * fd[:, None] * t_idx[None, :])
+
+        # 3. 利用 einsum 計算外積: (len(theta), stream_win, len(fd), dop_win)
+        sv = np.einsum('is,jt->isjt', exp_phi, exp_dop)
+        
+        # 4. 張量轉置與展平，精準對齊 Kronecker 積: (len(theta), len(fd), sv_len)
+        Steering_Vectors = sv.transpose(0, 2, 1, 3).reshape(len(theta), len(fd), -1)
+        
+        return Steering_Vectors / np.sqrt(self.stream_win * self.dop_win)
+
+    def cal_spectrum(self, Rxx):
+        print(f"Azi-Doppler Covariance Matrix shape = {Rxx.shape}")
+
+        eig_val, eig_vec = np.linalg.eigh(Rxx)
+        idx_order = eig_val.argsort()[::-1]
+        eig_val, eig_vec = eig_val[idx_order], eig_vec[:, idx_order]
+
+        if self.Sdim is None:
+            Sdim = resolve_Sdim(self.args, eig_val, label="Azi-Doppler")
+        else:
+            Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
+            
+        E_n = eig_vec[:, Sdim:]
+        if E_n.size == 0:
+            E_n = eig_vec[:, -1:]
+
+        theta = self.theta
+        fd = self.fd_grid
+
+        # 呼叫向量化的導向矩陣函數
+        sv_len = self.stream_win * self.dop_win
+        Steering_Vectors = self.steering_matrix(theta, fd)
+        
+        # 展平成 (網格總數, sv_len) 一次性投影到雜訊子空間
+        SV_flat = Steering_Vectors.reshape(len(theta) * len(fd), sv_len)
+        A = SV_flat.conj() @ E_n
+        
+        PP_flat = np.sum(np.abs(A) ** 2, axis=1)
+        P_music = 10.0 * np.log10(1.0 / (PP_flat + self.epsilon))
+        P_music = P_music.reshape(len(theta), len(fd))
+
+        return theta, fd, P_music
+
+    def gen_spectrum(self, CSI, frame_idx, x_axis="azi", y_axis="doppler"):
+        Rxx = self.Rxx_smooth(CSI, frame_idx)
+        if Rxx is None:
+            return
+        
+        theta, fd, P_azi_dop = self.cal_spectrum(Rxx)
+        
+        Plot.plot_heatmap(
+            frame_idx,
+            theta,
+            fd,
+            P_azi_dop.T,
+            self.args,
+            title="Azi-Doppler",
+            x_axis=x_axis,
+            y_axis=y_axis,
+            file_suffix="azi_doppler",
+        )
+
+
+class Azi_ToF_Dop:
+    def __init__(self, args):
+        self.args = args
+        self.steering_vector = SteeringVector(args)
+        self.Sdim = getattr(args, "Sdim", None)
+        
+        self.num_Rx = args.num_Rx
+        self.num_subcarriers = args.num_subcarriers
+        
+        # Window sizes for 3D smoothing
+        self.stream_win = int(args.stream_win)
+        self.freq_win = int(args.freq_win)
+        self.dop_win = int(args.time_win)
+        
+        # Sample ranges
+        self.stream_sample_range = int(min(args.stream_sample_range, args.num_Rx))
+        self.freq_sample_range = int(min(getattr(args, "freq_sample_range", args.num_subcarriers), args.num_subcarriers))
+        self.time_sample_range = int(max(getattr(args, "time_sample_range", self.dop_win), self.dop_win))
+        
+        # Hops/Strides
+        self.freq_hop = max(1, int(getattr(args, "freq_hop", 1)))
+        self.time_hop = max(1, int(getattr(args, "time_hop", 1)))
+        
+        self.fs = float(args.fs)
+        
+        # Resolution Grids
+        self.theta_grid = np.arange(args.theta_min, args.theta_max + 1, args.theta_step)
+        self.tau_grid = np.arange(args.tau_min, args.tau_max, args.tau_step)
+        self.fd_grid = np.arange(args.doppler_min, args.doppler_max + 0.5 * args.doppler_step, args.doppler_step)
+        
+        self.snapshot_norm = bool(getattr(args, "azi_tof_dop_snapshot_norm", True))
+        self.epsilon = float(getattr(args, "azi_tof_dop_epsilon", 1e-12))
+        self.last_cube = None
+        self.last_axes = None
+        
+        # Validation
+        if self.stream_win <= 0 or self.stream_win > self.stream_sample_range:
+            raise ValueError(f"Invalid stream_win={self.stream_win} relative to stream_sample_range")
+        if self.freq_win <= 0 or self.freq_win > self.freq_sample_range:
+            raise ValueError(f"Invalid freq_win={self.freq_win} relative to freq_sample_range")
+        if self.dop_win <= 0 or self.dop_win > self.time_sample_range:
+            raise ValueError(f"Invalid dop_win={self.dop_win} relative to time_sample_range")
+
+    def sample_CSI_segment(self, CSI, frame_idx):
+        total_frames = CSI.shape[0]
+        context_len = min(self.time_sample_range, total_frames)
+        frame_idx = int(np.clip(frame_idx, 0, total_frames - 1))
+        start = int(np.clip(frame_idx - context_len // 2, 0, total_frames - context_len))
+        end = start + context_len
+        return CSI[start:end], start, end
+
+    def Rxx_smooth(self, CSI, frame_idx):
+        csi_segment, start, end = self.sample_CSI_segment(CSI, frame_idx)
+        # Expected CSI shape: (frames, tx, rx, subc)
+        csi_segment = csi_segment[:, :, :self.stream_sample_range, :self.freq_sample_range]
+        context_len, num_tx, num_rx, num_subc = csi_segment.shape
+        
+        if context_len < self.dop_win:
+            print(f"Warning: Not enough samples for 3D smoothing at {frame_idx}")
+            return None
+
+        csi_segment = np.asarray(csi_segment, dtype=np.complex128)
+        csi_segment = csi_segment - np.mean(csi_segment, axis=0, keepdims=True)
+        
+        time_starts = np.arange(0, context_len - self.dop_win + 1, self.time_hop)
+        freq_starts = np.arange(0, num_subc - self.freq_win + 1, self.freq_hop)
+        stream_starts = np.arange(0, num_rx - self.stream_win + 1)
+        
+        total_snapshots = num_tx * len(stream_starts) * len(freq_starts) * len(time_starts)
+        sv_len = self.stream_win * self.freq_win * self.dop_win
+        X = np.empty((sv_len, total_snapshots), dtype=np.complex128)
+        
+        idx = 0
+        for tx in range(num_tx):
+            for s_start in stream_starts:
+                s_end = s_start + self.stream_win
+                for f_start in freq_starts:
+                    f_end = f_start + self.freq_win
+                    for t_start in time_starts:
+                        t_end = t_start + self.dop_win
+                        
+                        # Extract the 3D block
+                        block = csi_segment[t_start:t_end, tx, s_start:s_end, f_start:f_end]
+                        # Transpose to (stream, freq, time) to match Kronecker flattened ordering
+                        v = block.transpose(1, 2, 0).reshape(-1)
+                        
+                        if self.snapshot_norm:
+                            v = v / (np.linalg.norm(v) + 1e-12)
+                        X[:, idx] = v
+                        idx += 1
+
+        Rxx = (X @ X.conj().T) / max(idx, 1)
+        Rxx = (Rxx + Rxx.conj().T) / 2.0
+        print(f"Azi-ToF-Dop Rxx: {Rxx.shape}, snapshots={idx}, context={start}:{end}")
+        return Rxx
+
+    def cal_spectrum(self, CSI, frame_idx):
+        Rxx = self.Rxx_smooth(CSI, frame_idx)
+        if Rxx is None:
+            return None, None, None, None
+            
+        print(f"Azi-ToF-Doppler Covariance Matrix shape = {Rxx.shape}")
+        
+        eig_val, eig_vec = np.linalg.eigh(Rxx)
+        idx_order = eig_val.argsort()[::-1]
+        eig_val, eig_vec = eig_val[idx_order], eig_vec[:, idx_order]
+
+        if self.Sdim is None:
+            Sdim = resolve_Sdim(self.args, eig_val, label="Azi-ToF-Doppler")
+        else:
+            Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
+            
+        E_n = eig_vec[:, Sdim:]
+        if E_n.size == 0:
+            E_n = eig_vec[:, -1:]
+
+        theta = self.theta_grid
+        tau = self.tau_grid
+        fd = self.fd_grid
+        
+        P_music = np.zeros((len(theta), len(tau), len(fd)), dtype=float)
+        sv_len = self.stream_win * self.freq_win * self.dop_win
+        num_tau_fd = len(tau) * len(fd)
+        
+        # Calculate 3D steering vector cleanly and project onto Noise Subspace
+        for i, th in enumerate(tqdm(theta, desc="Calculating 3D MUSIC")):
+            A = np.empty((num_tau_fd, sv_len), dtype=complex)
+            row = 0
+            sv_azi = self.steering_vector.steering_vector_AoA(th, self.stream_win)
+            
+            for tau_val in tau:
+                for fd_val in fd:
+                    # Leverage ToF_Dop base steering vector
+                    sv_tof_dop = self.steering_vector.steering_vector_ToF_Dop(tau_val, fd_val)
+                    # Compose the total 3D steering vector
+                    sv_3d = np.kron(sv_azi, sv_tof_dop) 
+                    A[row] = sv_3d / np.sqrt(self.stream_win)
+                    row += 1
+                    
+            proj = A.conj() @ E_n
+            PP_flat = np.sum(np.abs(proj) ** 2, axis=1)
+            P_music[i, :, :] = 10.0 * np.log10(1.0 / (PP_flat + self.epsilon)).reshape(len(tau), len(fd))
+            
+        self.last_cube = P_music
+        self.last_axes = {"azi": theta, "tof": tau, "doppler": fd, "tof_ns": tau * 1e9}
+        
+        return theta, tau, fd, P_music
+
+    # =========================================================================
+    # Projection & Plotting Methods (Adapted safely from your original code)
+    # =========================================================================
+    
+    @staticmethod
+    def _axis_name(axis_name):
+        aliases = {"azi": "azi", "aoa": "azi", "theta": "azi", 
+                   "tof": "tof", "tau": "tof", 
+                   "doppler": "doppler", "fd": "doppler"}
+        normalized = aliases.get(str(axis_name).lower())
+        if normalized is None:
+            raise ValueError(f"Unsupported axis name: {axis_name}")
+        return normalized
+
+    @staticmethod
+    def _axis_label(axis_name):
+        labels = {"azi": "AoA theta (deg)", "tof": "ToF tau (ns)", "doppler": "Doppler frequency (Hz)"}
+        return labels[axis_name]
+
+    @staticmethod
+    def _axis_title(axis_name):
+        titles = {"azi": "Azi", "tof": "ToF", "doppler": "Doppler"}
+        return titles[axis_name]
+
+    @staticmethod
+    def _combine_axis(values, axis, method, axis_values=None):
+        method = str(method).lower()
+        if method in ["sum", "gate"]:
+            return np.sum(values, axis=axis)
+        if method == "max":
+            return np.max(values, axis=axis)
+        if method == "mean":
+            return np.mean(values, axis=axis)
+        if method == "weighted":
+            weights = np.abs(np.asarray(axis_values, dtype=float))
+            weights = weights / (np.sum(weights) + 1e-12)
+            shape = [1] * values.ndim
+            shape[axis] = weights.size
+            return np.sum(values * weights.reshape(shape), axis=axis)
+        raise ValueError(f"Unsupported method: {method}")
+
+    def gen_spectrum(self, CSI, frame_idx, x_axis="azi", y_axis="tof", method="max", z_range=None):
+        x_axis = self._axis_name(x_axis)
+        y_axis = self._axis_name(y_axis)
+        if x_axis == y_axis:
+            raise ValueError("x_axis and y_axis must be different")
+
+        theta, tau, freqs, P_music = self.cal_spectrum(CSI, frame_idx)
+        if P_music is None:
+            return []
+            
+        axis_order = ["azi", "tof", "doppler"]
+        axis_values = {"azi": theta, "tof": tau, "doppler": freqs}
+        z_gate_values = {"azi": theta, "tof": tau * 1e9, "doppler": freqs}
+        
+        z_axis = next(axis for axis in axis_order if axis not in (x_axis, y_axis))
+        z_idx = axis_order.index(z_axis)
+
+        gates = [None] if z_range is None else np.atleast_2d(z_range).tolist()
+        results = []
+
+        for gate in gates:
+            spectrum = P_music
+            gate_label = "all"
+            z_values_for_gate = z_gate_values[z_axis]
+            z_values_for_weight = axis_values[z_axis]
+            
+            if gate is not None:
+                low, high = sorted([float(gate[0]), float(gate[1])])
+                mask = (z_values_for_gate >= low) & (z_values_for_gate <= high)
+                if not np.any(mask):
+                    continue
+                spectrum = np.take(P_music, np.flatnonzero(mask), axis=z_idx)
+                z_values_for_weight = axis_values[z_axis][mask]
+                gate_label = f"{low:g}-{high:g}"
+
+            # Convert to Linear scale for safe projection math
+            linear_spectrum = 10 ** (spectrum / 10.0) 
+            heatmap = self._combine_axis(linear_spectrum, axis=z_idx, method=method, axis_values=z_values_for_weight)
+            heatmap_db = 10 * np.log10(heatmap + 1e-12)
+
+            remaining_axes = [axis for axis in axis_order if axis != z_axis]
+            if remaining_axes == [x_axis, y_axis]:
+                heatmap_xy = heatmap_db
+            elif remaining_axes == [y_axis, x_axis]:
+                heatmap_xy = heatmap_db.T
+            else:
+                raise ValueError(
+                    f"Cannot align projected axes {remaining_axes} to "
+                    f"x_axis={x_axis}, y_axis={y_axis}"
+                )
+
+            plot_values = heatmap_xy.T
+            if plot_values.shape != (len(axis_values[y_axis]), len(axis_values[x_axis])):
+                raise ValueError(
+                    "Projected 3D heatmap shape does not match requested axes: "
+                    f"got {plot_values.shape}, expected "
+                    f"{(len(axis_values[y_axis]), len(axis_values[x_axis]))} "
+                    f"for x_axis={x_axis}, y_axis={y_axis}."
+                )
+
+            suffix = gate_label.replace("-", "_").replace(".", "p")
+            file_suffix = f"aoa_tof_dop_{x_axis}_{y_axis}_gate_{z_axis}_{suffix}_{method}"
+            Plot.plot_heatmap(
+                frame_idx,
+                axis_values[x_axis],
+                axis_values[y_axis],
+                plot_values,
+                self.args,
+                title=(
+                    f"3D MUSIC {self._axis_title(x_axis)}-{self._axis_title(y_axis)} "
+                    f"@ {self._axis_title(z_axis)} {gate_label} ({method})"
+                ),
+                x_axis=x_axis,
+                y_axis=y_axis,
+                file_suffix=file_suffix,
+            )
+            fig = plt.gcf()
+            ax = plt.gca()
+
+            results.append({
+                "fig": fig, "ax": ax, "heatmap_db": plot_values,
+                "x_axis": x_axis, "y_axis": y_axis, "z_axis": z_axis, 
+            })
+
+        return results
+
+
+ToF_Doppler = ToF_Dop
+Azi_ToF_Doppler = Azi_ToF_Dop
 Azi_Doppler = Azi_Dop
