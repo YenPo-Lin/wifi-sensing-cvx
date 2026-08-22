@@ -117,9 +117,9 @@ class SteeringVector:
         if freq_hop is None:
             freq_hop = self.freq_hop
 
-        exp_phi = self.steering_vector_AoA(theta_i, stream_win)
-        exp_omega = self.steering_vector_ToF(tau_j, freq_win, freq_hop)
-        steering_vector = np.kron(exp_phi, exp_omega)
+        phase_azi = self.steering_vector_AoA(theta_i, stream_win)
+        phase_tof = self.steering_vector_ToF(tau_j, freq_win, freq_hop)
+        steering_vector = np.kron(phase_azi, phase_tof)
         return steering_vector.flatten()
 
     def steering_vector_ToF_Dop(self, tau, fd):
@@ -137,6 +137,19 @@ class SteeringVector:
         phase_dop = -2 * np.pi * fd * t_idx
         sv = np.exp(-1j * (phase_tof + phase_dop))
         return sv.reshape(-1) / np.sqrt(self.freq_win * self.dop_win)
+
+    def steering_vector_AoA_Dop(self, theta_i, fd, stream_win=None, dop_win=None):
+        if stream_win is None:
+            stream_win = self.stream_win
+        if dop_win is None:
+            dop_win = self.dop_win
+
+        exp_phi = self.steering_vector_AoA(theta_i, stream_win)
+        t_idx = np.arange(dop_win) / self.fs
+        exp_dop = np.exp(1j * 2 * np.pi * fd * t_idx)
+        steering_vector = np.kron(exp_phi, exp_dop)
+        return steering_vector.flatten() / np.sqrt(stream_win * dop_win)
+
 
 class Azi_ToF:
     def __init__(self, args):
@@ -201,11 +214,20 @@ class Azi_ToF:
                 f"stream_sample_range={self.stream_sample_range}"
             )
 
-    def gen_spectrum(self, CSI, frame_idx):
+    def gen_spectrum(self, CSI, frame_idx, x_axis="azi", y_axis="tof"):
         x = self.cal_smoothed_csi(frame_idx, CSI)
         Rxx = self.cal_smoothed_cov(x)
         tau_x, theta_x, P_music_x = self.cal_spectrum(Rxx)
-        Plot.plot_spectrum(frame_idx, tau_x, theta_x, P_music_x, self.args, title="Azi-ToF")
+        Plot.plot_spectrum(
+            frame_idx,
+            tau_x,
+            theta_x,
+            P_music_x,
+            self.args,
+            title="Azi-ToF",
+            x_axis=x_axis,
+            y_axis=y_axis,
+        )
 
     def smooth_csi(self, csi):
         """
@@ -325,6 +347,7 @@ class Azi_ToF:
         P_music = 10 * np.log10(1.0 / PP + 1e-12)
 
         return tau, theta, P_music
+
 
 
 class ToF_Doppler:
@@ -484,9 +507,195 @@ class ToF_Doppler:
 
         return tau, fd, PP
 
-    def gen_spectrum(self, CSI, frame_idx):
+    def gen_spectrum(self, CSI, frame_idx, x_axis="doppler", y_axis="tof"):
         Rxx = self.Rxx_smooth(CSI, frame_idx)
         if Rxx is None:
             return
         tau, fd, P_tof_dop = self.cal_spectrum(Rxx)
-        Plot.plot_spectrum(frame_idx, tau, fd, P_tof_dop.T, self.args, title="ToF-Doppler")
+        Plot.plot_spectrum(
+            frame_idx,
+            tau,
+            fd,
+            P_tof_dop.T,
+            self.args,
+            title="ToF-Doppler",
+            x_axis=x_axis,
+            y_axis=y_axis,
+        )
+
+
+class Azi_Dop:
+    def __init__(self, args):
+        self.args = args
+        self.steering_vector = SteeringVector(args)
+        self.Sdim = getattr(args, "Sdim", None)
+        self.stream_win = int(args.stream_win)
+        self.stream_sample_range = int(min(args.stream_sample_range, args.num_Rx))
+        self.freq_sample_range = int(
+            min(getattr(args, "freq_sample_range", args.num_subcarriers), args.num_subcarriers)
+        )
+        self.dop_win = int(args.time_win)
+        self.time_hop = max(1, int(getattr(args, "time_hop", 1)))
+        self.time_sample_range = int(
+            max(getattr(args, "time_sample_range", self.dop_win), self.dop_win)
+        )
+        self.fs = float(args.fs)
+        self.theta = np.arange(args.theta_min, args.theta_max + 1, args.theta_step)
+        self.fd_grid = np.arange(
+            args.doppler_min,
+            args.doppler_max + 0.5 * args.doppler_step,
+            args.doppler_step,
+        )
+        self.snapshot_norm = bool(getattr(args, "azi_dop_snapshot_norm", True))
+        self.epsilon = float(getattr(args, "azi_dop_epsilon", 1e-12))
+        self.last_meta = None
+
+        if self.stream_sample_range <= 0:
+            raise ValueError(
+                f"stream_sample_range must be positive, got {self.stream_sample_range}"
+            )
+        if self.freq_sample_range <= 0:
+            raise ValueError(
+                f"freq_sample_range must be positive, got {self.freq_sample_range}"
+            )
+        if self.stream_win <= 0:
+            raise ValueError(f"stream_win must be positive, got {self.stream_win}")
+        if self.stream_win > self.stream_sample_range:
+            raise ValueError(
+                f"stream_win={self.stream_win} cannot exceed "
+                f"stream_sample_range={self.stream_sample_range}"
+            )
+        if self.dop_win <= 0:
+            raise ValueError(f"time_win must be positive, got {self.dop_win}")
+        if self.time_sample_range < self.dop_win:
+            raise ValueError(
+                f"time_sample_range={self.time_sample_range} cannot be smaller than "
+                f"time_win={self.dop_win}"
+            )
+
+    def sample_CSI_segment(self, CSI, frame_idx):
+        total_frames = CSI.shape[0]
+        context_len = min(self.time_sample_range, total_frames)
+        frame_idx = int(np.clip(frame_idx, 0, total_frames - 1))
+        start = int(np.clip(frame_idx - context_len // 2, 0, total_frames - context_len))
+        end = start + context_len
+        return CSI[start:end], start, end
+
+    def Rxx_smooth(self, CSI, frame_idx):
+        csi_segment, start, end = self.sample_CSI_segment(CSI, frame_idx)
+        csi_segment = csi_segment[:, :, :self.stream_sample_range, :self.freq_sample_range]
+        context_len, num_tx, num_rx, num_subc = csi_segment.shape
+
+        if context_len < self.dop_win:
+            print(f"Warning: Not enough samples for Azi-Doppler smoothing at {frame_idx}")
+            return None
+
+        csi_segment = np.asarray(csi_segment, dtype=np.complex128)
+        csi_segment = csi_segment - np.mean(csi_segment, axis=0, keepdims=True)
+        taper = np.hanning(self.dop_win)[None, :]
+
+        time_starts = np.arange(0, context_len - self.dop_win + 1, self.time_hop)
+        stream_starts = np.arange(0, num_rx - self.stream_win + 1)
+        total_snapshots = num_tx * num_subc * len(stream_starts) * len(time_starts)
+        sv_len = self.stream_win * self.dop_win
+        X = np.empty((sv_len, total_snapshots), dtype=np.complex128)
+
+        idx = 0
+        for tx in range(num_tx):
+            for subc in range(num_subc):
+                for stream_start in stream_starts:
+                    stream_end = stream_start + self.stream_win
+                    for time_start in time_starts:
+                        time_end = time_start + self.dop_win
+                        block = csi_segment[
+                            time_start:time_end,
+                            tx,
+                            stream_start:stream_end,
+                            subc,
+                        ]
+                        v = (block.T * taper).reshape(-1)
+                        if self.snapshot_norm:
+                            v = v / (np.linalg.norm(v) + 1e-12)
+                        X[:, idx] = v
+                        idx += 1
+
+        Rxx = (X @ X.conj().T) / max(idx, 1)
+        Rxx = (Rxx + Rxx.conj().T) / 2.0
+        self.last_meta = {
+            "context": (start, end),
+            "num_tx": num_tx,
+            "num_rx": num_rx,
+            "num_subc": num_subc,
+            "num_stream_slides": len(stream_starts),
+            "num_time_slides": len(time_starts),
+            "num_snapshots": idx,
+            "vec_len": sv_len,
+        }
+        print(
+            f"Azi-Dop Rxx: {Rxx.shape}, snapshots={idx}, "
+            f"context={start}:{end}, stream_slides={len(stream_starts)}, "
+            f"time_slides={len(time_starts)}"
+        )
+        return Rxx
+
+    def steering_matrix(self, theta, fd):
+        sv_len = self.stream_win * self.dop_win
+        Steering_Vectors = np.zeros((len(theta), len(fd), sv_len), dtype=complex)
+        for i in range(len(theta)):
+            for j in range(len(fd)):
+                sv = self.steering_vector.steering_vector_AoA_Dop(
+                    theta[i],
+                    fd[j],
+                    self.stream_win,
+                    self.dop_win,
+                )
+                Steering_Vectors[i, j, :] = sv
+        return Steering_Vectors
+
+    def cal_spectrum(self, Rxx):
+        print(f"Azi-Doppler Covariance Matrix shape = {Rxx.shape}")
+
+        eig_val, eig_vec = np.linalg.eigh(Rxx)
+        idx_order = eig_val.argsort()[::-1]
+        eig_val, eig_vec = eig_val[idx_order], eig_vec[:, idx_order]
+
+        if self.Sdim is None:
+            Sdim = resolve_Sdim(self.args, eig_val, label="Azi-Doppler")
+        else:
+            Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
+        E_n = eig_vec[:, Sdim:]
+        if E_n.size == 0:
+            E_n = eig_vec[:, -1:]
+
+        theta = self.theta
+        fd = self.fd_grid
+
+        sv_len = self.stream_win * self.dop_win
+        Steering_Vectors = self.steering_matrix(theta, fd)
+        SV_flat = Steering_Vectors.reshape(len(theta) * len(fd), sv_len)
+        A = SV_flat.conj() @ E_n
+        PP_flat = np.sum(np.abs(A) ** 2, axis=1)
+        P_music = 10.0 * np.log10(1.0 / (PP_flat + self.epsilon))
+        P_music = P_music.reshape(len(theta), len(fd))
+
+        return theta, fd, P_music
+
+    def gen_spectrum(self, CSI, frame_idx, x_axis="azi", y_axis="doppler"):
+        Rxx = self.Rxx_smooth(CSI, frame_idx)
+        if Rxx is None:
+            return
+        theta, fd, P_azi_dop = self.cal_spectrum(Rxx)
+        Plot.plot_heatmap(
+            frame_idx,
+            theta,
+            fd,
+            P_azi_dop.T,
+            self.args,
+            title="Azi-Doppler",
+            x_axis=x_axis,
+            y_axis=y_axis,
+            file_suffix="azi_doppler",
+        )
+
+
+Azi_Doppler = Azi_Dop

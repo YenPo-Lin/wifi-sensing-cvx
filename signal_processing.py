@@ -5,6 +5,7 @@ import Plot
 import LASSO
 import os
 import time
+import Doppler_spec
 
 
 
@@ -40,18 +41,29 @@ def signal_processing(raw_CSI, args):
 
     tof_dop = MUSIC.ToF_Doppler(args)
     azi_tof = MUSIC.Azi_ToF(args)
+    azi_dop = MUSIC.Azi_Dop(args)
 
     
-    frame_idx = 1550
+    frame_idx = 888
 
     print(f"Processing Frame {frame_idx}... ")
 
-    #_,_,_ = LASSO.gen_L2_LASSO_prob(CSI_dwt, args, frame_idx, Nrx=args.num_Rx, Nsubc=args.num_subcarriers, lam=args.lam)
+    #Doppler_spec.gen_spectrogram(CSI, args)
 
-    azi_tof.gen_spectrum(CSI, frame_idx)
-    #tof_dop.gen_spectrum(CSI, frame_idx)
-    LASSO.gen_L2_LASSO_prob(CSI, args, frame_idx)
-    LASSO.gen_MUSIC_weight_L2_LASSO_prob(CSI, args, frame_idx)
+    for i in range(1000, 1500, 10):
+        frame_idx = i
+        print(f"Processing Frame {frame_idx}... ")
+        azi_tof.gen_spectrum(CSI, frame_idx, x_axis="azimuth", y_axis="tof")
+
+
+
+
+
+    #azi_tof.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="tof")
+    #tof_dop.gen_spectrum(CSI, frame_idx, x_axis="doppler", y_axis="tof")
+    #azi_dop.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="doppler")
+    #LASSO.gen_L2_LASSO_prob(CSI, args, frame_idx)
+    #LASSO.gen_MUSIC_weight_L2_LASSO_prob(CSI, args, frame_idx)
 
 
 

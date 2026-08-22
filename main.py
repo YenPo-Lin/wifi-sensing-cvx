@@ -11,7 +11,7 @@ def create_parser():
     parser = argparse.ArgumentParser()
 
     # npz 文件路徑
-    file_path = "/Users/YPL/Downloads/20260624-205355_walk-front-back-64.npz"
+    file_path = "/Users/YPL/Documents/NPZ_files/20260821-125845_big_swing.npz"
     parser.add_argument('--csi_file', type=str, default=file_path)
     
     # ---- CSI parameters ----
@@ -21,18 +21,18 @@ def create_parser():
     # 160 M /2024 = 79.05 kHz 
     # 160 M /63 =  2.54 MHz
     parser.add_argument('--fs', type=int, default=100)
-    parser.add_argument('--antenna_spacing', type=float, default=0.015)
+    parser.add_argument('--antenna_spacing', type=float, default=0.02)
     
     # ---- MUSIC settings ----
-    parser.add_argument('--preprocess', type=str, default='pca', choices=['ma', 'dwt', 'pca'])
+    parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'dwt', 'pca'])
     parser.add_argument('--show_preprocessing_methods', type=bool, default=False)
     # plotted frame
     parser.add_argument('--frame_idx', type=int, default=100)
     # MUSIC signal dimension
     parser.add_argument('--Sdim', type=int, default=None)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.77)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.87)
     parser.add_argument('--avg_frames', type=int, default=50)
-    parser.add_argument('--projection', type=str, default='sin', choices=['sin', 'cos'])
+    parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
     parser.add_argument('--stream_win', type=int, default=5)
     parser.add_argument('--stream_sample_range', type=int, default=8) #all Rx
@@ -43,14 +43,14 @@ def create_parser():
     parser.add_argument('--freq_space', type=int, default=1) # if freq resampling
 
 
-    parser.add_argument('--time_win', type=int, default=25)
+    parser.add_argument('--time_win', type=int, default=24)
     parser.add_argument('--time_hop', type=int, default=1)
     parser.add_argument('--time_sample_range', type=int, default=80) #100 frames
 
     # Azimuth grid
-    parser.add_argument('--theta_min', type=float, default= -60)
-    parser.add_argument('--theta_max', type=float, default= 60)
-    parser.add_argument('--theta_step', type=int, default=3)
+    parser.add_argument('--theta_min', type=float, default= 30)
+    parser.add_argument('--theta_max', type=float, default= 150)
+    parser.add_argument('--theta_step', type=int, default=2)
     # Time of Flight grid
     parser.add_argument('--axis', type=str, default='ns', choices=['ns', 'm'])
     parser.add_argument('--tau_min', type=float, default=2e-9)
@@ -61,13 +61,17 @@ def create_parser():
     parser.add_argument('--doppler_max', type=float, default=30)
     parser.add_argument('--doppler_step', type=float, default=1)
 
+    # Doppler spectrogram settings
+    parser.add_argument('--stft_nperseg', type=int, default=64)
+    parser.add_argument('--stft_noverlap', type=int, default=63) # hop 1
+
     # heatmap axis (X: Azi, Y: TOF if True)
     parser.add_argument('--axis_flip', type=bool, default=True)
     parser.add_argument('--colorbar', type=bool, default=True)
     
     
     # ---- 圖片保存路徑 ----
-    parser.add_argument('--pics_dir', type=str, default=None)
+    parser.add_argument('--pics_dir', type=str, default="20260821-125845_big_swing")
     
     # ---- L2 LASSO 設置 ----
     parser.add_argument('--svd_frames', type=int, default=11)
