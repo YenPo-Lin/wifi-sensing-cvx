@@ -264,6 +264,88 @@ def _select_csi_tx_block(CSI, tx=0):
     )
 
 
+def cell_averaging_cfar(
+    profile,
+    training_cells=2,
+    guard_cells=1,
+    threshold_factor=1.05,
+    top_k=None,
+    min_peak_distance=1,
+    min_prominence_db=0.0,
+):
+    """
+    Detect peaks using 1-D cell-averaging CFAR on a linear-power profile.
+
+    If top_k is provided, CFAR detections are supplemented with the strongest
+    local maxima until top_k peaks are available. This is intentionally useful
+    for motion gating, where missing a body-part Doppler bin is worse than
+    keeping a few extra candidates.
+
+    Returns:
+        peak_indices: detected local-maximum bins above adaptive threshold.
+        threshold: linear CFAR threshold for each bin, NaN at invalid edge bins.
+    """
+    profile = np.asarray(profile, dtype=float)
+    training_cells = int(training_cells)
+    guard_cells = int(guard_cells)
+    threshold_factor = float(threshold_factor)
+    min_peak_distance = int(min_peak_distance)
+    min_prominence_db = float(min_prominence_db)
+
+    if training_cells <= 0:
+        raise ValueError(f"training_cells must be positive, got {training_cells}")
+    if guard_cells < 0:
+        raise ValueError(f"guard_cells must be non-negative, got {guard_cells}")
+    if threshold_factor <= 0:
+        raise ValueError(f"threshold_factor must be positive, got {threshold_factor}")
+    if min_peak_distance <= 0:
+        raise ValueError(f"min_peak_distance must be positive, got {min_peak_distance}")
+
+    threshold = np.full(profile.shape, np.nan, dtype=float)
+    peak_indices = []
+    margin = training_cells + guard_cells
+
+    for idx in range(margin, len(profile) - margin):
+        left_train = profile[idx - margin:idx - guard_cells]
+        right_train = profile[idx + guard_cells + 1:idx + guard_cells + 1 + training_cells]
+        training = np.concatenate((left_train, right_train))
+        training = training[np.isfinite(training)]
+        if training.size == 0:
+            continue
+
+        noise_power = np.mean(training)
+        threshold[idx] = threshold_factor * noise_power
+        is_local_max = profile[idx] >= profile[idx - 1] and profile[idx] >= profile[idx + 1]
+        if np.isfinite(profile[idx]) and profile[idx] > threshold[idx] and is_local_max:
+            peak_indices.append(idx)
+
+    peak_indices = np.asarray(peak_indices, dtype=int)
+    if top_k is not None:
+        top_k = int(top_k)
+        if top_k <= 0:
+            raise ValueError(f"top_k must be positive, got {top_k}")
+
+        profile_db = 10.0 * np.log10(np.maximum(profile, 1e-12))
+        local_peaks, _ = find_peaks(
+            profile_db,
+            distance=min_peak_distance,
+            prominence=min_prominence_db,
+        )
+        local_order = np.argsort(profile_db[local_peaks])[::-1]
+        selected = list(peak_indices)
+        selected_set = set(selected)
+        for idx in local_peaks[local_order]:
+            if idx in selected_set:
+                continue
+            selected.append(idx)
+            selected_set.add(idx)
+            if len(selected) >= top_k:
+                break
+        peak_indices = np.asarray(selected, dtype=int)
+
+    return peak_indices, threshold
+
+
 def gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="sum", tx=0):
     """
     Build a ToF-Doppler MUSIC spectrum, then collapse the ToF axis to Doppler.
@@ -274,7 +356,7 @@ def gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="sum", tx=0):
         "mean": average MUSIC power over all ToF bins.
 
     Returns:
-        fig, ax, fd, spectrum_db, peak_fd, peak_indices, tau, P_tof_dop
+        peak_fd, peak_db sorted by peak_db from high to low.
     """
     method = str(method).lower()
     if method not in ("sum", "max", "mean"):
@@ -296,32 +378,43 @@ def gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="sum", tx=0):
         spectrum = np.mean(P_tof_dop, axis=0)
 
     spectrum_db = 10.0 * np.log10(np.maximum(spectrum, 1e-12))
-
-    finite = spectrum_db[np.isfinite(spectrum_db)]
-    if finite.size == 0:
-        peak_indices = np.array([], dtype=int)
-    else:
-        median = np.median(finite)
-        mad = np.median(np.abs(finite - median))
-        noise_scale = 1.4826 * mad
-        height = median + max(3.0 * noise_scale, 3.0)
-        prominence = max(noise_scale, 1.0)
-        peak_indices, _ = find_peaks(spectrum_db, height=height, prominence=prominence)
-
+    peak_indices, _ = cell_averaging_cfar(
+        spectrum,
+        training_cells=getattr(args, "cfar_training_cells", 2),
+        guard_cells=getattr(args, "cfar_guard_cells", 1),
+        threshold_factor=getattr(args, "cfar_threshold_factor", 1.05),
+        top_k=getattr(args, "cfar_top_k", 5),
+        min_peak_distance=getattr(args, "cfar_min_peak_distance", 1),
+        min_prominence_db=getattr(args, "cfar_min_prominence_db", 0.0),
+    )
     peak_fd = fd[peak_indices]
+    peak_db = spectrum_db[peak_indices]
+    order = np.argsort(peak_db)[::-1]
+    peak_indices = peak_indices[order]
+    peak_fd = peak_fd[order]
+    peak_db = peak_db[order]
 
     fig, ax = plt.subplots(figsize=(9, 4), constrained_layout=True)
     ax.plot(fd, spectrum_db, linewidth=1.4)
     if peak_indices.size:
         ax.scatter(
             peak_fd,
-            spectrum_db[peak_indices],
+            peak_db,
             color="tab:red",
             marker="x",
             s=45,
-            label="Detected Doppler bins",
+            label="Peak",
             zorder=3,
         )
+        for f_i, db_i in zip(peak_fd, peak_db):
+            ax.annotate(
+                f"{f_i:g} Hz",
+                xy=(f_i, db_i),
+                xytext=(4, 5),
+                textcoords="offset points",
+                fontsize=8,
+                color="tab:red",
+            )
         ax.legend()
 
     ax.axvline(0.0, color="0.4", linestyle="--", linewidth=0.8, alpha=0.6)
@@ -342,8 +435,9 @@ def gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="sum", tx=0):
         print(f"Saved: {save_path}")
 
     print("Detected Doppler bins from ToF-Doppler MUSIC (Hz):", np.round(peak_fd, 3))
+    print("Detected Doppler bins from ToF-Doppler MUSIC (dB):", np.round(peak_db, 3))
 
-    return fig, ax, fd, spectrum_db, peak_fd, peak_indices, tau, P_tof_dop
+    return peak_fd, peak_db
 
 
 def gen_spectrum_from_ToF_Doppler_Rx_diff(CSI, frame_idx, args, method="sum", tx=0):
