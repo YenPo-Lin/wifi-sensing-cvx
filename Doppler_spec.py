@@ -402,8 +402,8 @@ def gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="sum", tx=0):
             peak_db,
             color="tab:red",
             marker="x",
-            s=45,
-            label="Peak",
+            s=42,
+            label="CFAR peak",
             zorder=3,
         )
         for f_i, db_i in zip(peak_fd, peak_db):

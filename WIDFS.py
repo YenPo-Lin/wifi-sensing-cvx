@@ -75,7 +75,6 @@ def doppler_fitting(norm_filtered_power, fd, args):
     sin_coeffs = coeffs[1].reshape(original_shape[1:])
     return cos_coeffs, sin_coeffs
 
-
 def _channel_weights_from_norm_power(norm_dyn_power, center_dfs_hz, args):
     """Estimate WIDFS channel weights from a local normalized power sequence."""
     cos_coeffs, sin_coeffs = doppler_fitting(
@@ -100,7 +99,6 @@ def _channel_weights_from_norm_power(norm_dyn_power, center_dfs_hz, args):
 
     ref_quality_metric = getattr(args, "q_ref", 1.0)
     return dyn_intensity * r2_purity_score * ref_quality_metric
-
 
 def weight_gen(raw_csi, center_dfs_hz, args):
     # ==========================================
@@ -175,11 +173,9 @@ def plot_power_heatmap(power_data, tx_idx=0, log_scale=True, percentile=(1, 99))
 
     plt.tight_layout()
 
-
 def dfs_channel_weighting(raw_CSI, target_fd, args):
     _, weighted_power = weight_gen(raw_CSI, target_fd, args)
     plot_power_heatmap(weighted_power, tx_idx=0, log_scale=True)
-
 
 def dfs_weighted_heatmap(raw_CSI, args):
     """
@@ -192,6 +188,7 @@ def dfs_weighted_heatmap(raw_CSI, args):
     Returns a dictionary containing selected peaks, per-peak WIDFS weights,
     confidence scores, the combined channel weight, and projected heatmaps.
     """
+    # ============Preprocessing================
     start_preprocessing = time.time()
     amplitude_CSI = np.nan_to_num(
         np.abs(raw_CSI), nan=0.0, posinf=0.0, neginf=0.0
@@ -202,6 +199,8 @@ def dfs_weighted_heatmap(raw_CSI, args):
 
     end_preprocessing = time.time()
     print(f"Preprocessing Time: {end_preprocessing - start_preprocessing:.2f}s")
+    # ============Preprocessing================
+
 
     total_frames = amplitude_CSI.shape[0]
     if total_frames == 0:

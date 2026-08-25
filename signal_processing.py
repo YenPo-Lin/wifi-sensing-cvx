@@ -47,7 +47,7 @@ def signal_processing(raw_CSI, args):
 
     print(f"Processing Frame {frame_idx}... ")
 
-    Doppler_spec.gen_spectrogram(CSI, args)
+    #Doppler_spec.gen_spectrogram(CSI, args)
     #Doppler_spec.gen_spectrum(CSI, frame_idx)
     Doppler_spec.gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="max")
     #Doppler_spec.gen_spectrum_from_ToF_Doppler_Rx_diff(CSI, frame_idx, args, method="max")

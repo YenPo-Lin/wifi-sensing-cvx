@@ -103,7 +103,7 @@ def plot_spectrum(
     P_music,
     args,
     title="",
-    cmap='jet',
+    cmap='turbo',
     x_axis=None,
     y_axis=None,
 ):

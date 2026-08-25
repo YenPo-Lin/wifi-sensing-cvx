@@ -27,7 +27,7 @@ def create_parser():
     # ---- MUSIC settings ----
     parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'dwt', 'pca'])
     # plotted frame
-    parser.add_argument('--frame_idx', type=int, default=100)
+    parser.add_argument('--frame_idx', type=int, default=1300)
     # MUSIC signal dimension
     parser.add_argument('--Sdim', type=int, default=None)
     parser.add_argument('--Sdim_energy_ratio', type=float, default=0.77)
