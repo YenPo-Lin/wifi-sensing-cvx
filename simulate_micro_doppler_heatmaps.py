@@ -33,21 +33,26 @@ def simulation_args(num_frames, num_tx, num_rx, num_subcarriers):
         num_subcarriers=num_subcarriers,
         avg_frames=32,
         Sdim=2,
-        Sdim_energy_ratio=0.33,
+        Sdim_energy_ratio=0.77,
+        tof_dop_Sdim=5,
+        tof_dop_Sdim_energy_ratio=None,
+        azi_tof_Sdim=2,
         stream_win=5,
         stream_sample_range=num_rx,
-        freq_win=32,
+        freq_win=24,
         freq_hop=2,
+        azi_tof_freq_win=24,
+        azi_tof_freq_hop=2,
         freq_sample_range=num_subcarriers,
         freq_space=1,
-        time_win=20,
+        time_win=24,
         time_hop=2,
         time_sample_range=30,
-        theta_min=0.0,
-        theta_max=180.0,
+        theta_min=30.0,
+        theta_max=150.0,
         theta_step=3.0,
         tau_min=2e-9,
-        tau_max=20e-9,
+        tau_max=16e-9,
         tau_step=3e-10,
         doppler_min=-20.0,
         doppler_max=20.0,
@@ -69,13 +74,16 @@ def simulation_args(num_frames, num_tx, num_rx, num_subcarriers):
         cfar_min_peak_distance=1,
         cfar_min_prominence_db=0.0,
         # Robustness parameters
-        noise_level=0.05,
-        ch_gain_min=0.8,
-        ch_gain_max=1.2,
-        strong_amplitude=0.1,
-        weak_amplitude=0.1,
-        rx_envelope_width=0.25, # lower for more deeper spatial fading
-        sub_envelope_width=0.25,# lower for more deeper frequency fading
+        noise_level=0.5,
+        ch_gain_min=0.5,
+        ch_gain_max=1.5,
+        strong_amplitude=0.12,
+        weak_amplitude=0.06,
+        channel_envelope_floor=0.01,
+        # Keep each target visible across enough neighboring channels for the
+        # 5-Rx / 16-subcarrier Azi-ToF smoothing aperture.
+        rx_envelope_width=1.5,
+        sub_envelope_width=4.0,
     )
 
 
@@ -110,17 +118,27 @@ def generate_magnitude_csi(args, seed=7):
     rng = np.random.default_rng(seed)
     time_s = np.arange(args.num_frames) / args.fs
 
-    strong = {"theta": 40.0, "tof": 6e-9, "fd": 12.0, "amplitude": args.strong_amplitude}
-    weak = {"theta": 75.0, "tof": 12e-9, "fd": +8.0, "amplitude": args.weak_amplitude}
+    strong = {"theta": 40.0, "tof": 6e-9, "fd": 16.0, "amplitude": args.strong_amplitude}
+    weak = {"theta": 75.0, "tof": 12e-9, "fd": 8.0, "amplitude": args.weak_amplitude}
 
     rx = np.arange(args.num_Rx)[:, None]
     sub = np.arange(args.num_subcarriers)[None, :]
-    strong_rx_envelope = 0.05 + 0.95 * np.exp(-0.5 * ((rx - 1.5) / args.rx_envelope_width) ** 2)
-    strong_sub_envelope = 0.05 + 0.95 * np.exp(-0.5 * ((sub - 8.0) / args.sub_envelope_width) ** 2)
+    envelope_floor = float(args.channel_envelope_floor)
+    envelope_span = 1.0 - envelope_floor
+    strong_rx_envelope = envelope_floor + envelope_span * np.exp(
+        -0.5 * ((rx - 1.5) / args.rx_envelope_width) ** 2
+    )
+    strong_sub_envelope = envelope_floor + envelope_span * np.exp(
+        -0.5 * ((sub - 8.0) / args.sub_envelope_width) ** 2
+    )
     strong_envelope = strong_rx_envelope * strong_sub_envelope
 
-    weak_rx_envelope = 0.05 + 0.95 * np.exp(-0.5 * ((rx - 5.5) / args.rx_envelope_width) ** 2)
-    weak_sub_envelope = 0.05 + 0.95 * np.exp(-0.5 * ((sub - 23.0) / args.sub_envelope_width) ** 2)
+    weak_rx_envelope = envelope_floor + envelope_span * np.exp(
+        -0.5 * ((rx - 5.5) / args.rx_envelope_width) ** 2
+    )
+    weak_sub_envelope = envelope_floor + envelope_span * np.exp(
+        -0.5 * ((sub - 23.0) / args.sub_envelope_width) ** 2
+    )
     weak_envelope = weak_rx_envelope * weak_sub_envelope
 
     strong_component = magnitude_target(
@@ -176,7 +194,11 @@ def normalize_magnitude(magnitude_csi, args):
 
 
 def azi_tof_spectrum(csi, frame_idx, args):
-    estimator = MUSIC.Azi_ToF(args)
+    azi_tof_args = copy(args)
+    azi_tof_args.freq_win = int(args.azi_tof_freq_win)
+    azi_tof_args.freq_hop = int(args.azi_tof_freq_hop)
+    azi_tof_args.Sdim = int(args.azi_tof_Sdim)
+    estimator = MUSIC.Azi_ToF(azi_tof_args)
     smoothed = estimator.cal_smoothed_csi(frame_idx, csi)
     covariance = estimator.cal_smoothed_cov(smoothed)
     tau, theta, spectrum_db = estimator.cal_spectrum(covariance)
@@ -208,10 +230,33 @@ def project_doppler_mask(cube_db, mask, method="max"):
     return 10.0 * np.log10(projected + 1e-12)
 
 
+def select_doppler_roi(fd_grid, center_fd, half_width):
+    """Snap a Doppler center to the grid and select a symmetric bin RoI."""
+    fd_grid = np.asarray(fd_grid, dtype=float)
+    if fd_grid.ndim != 1 or fd_grid.size == 0:
+        raise ValueError("fd_grid must be a non-empty 1-D array")
+    if half_width < 0:
+        raise ValueError(f"half_width must be non-negative, got {half_width}")
+
+    center_idx = int(np.argmin(np.abs(fd_grid - center_fd)))
+    snapped_center = float(fd_grid[center_idx])
+    if fd_grid.size == 1:
+        bin_radius = 0
+    else:
+        doppler_step = float(np.median(np.abs(np.diff(fd_grid))))
+        if doppler_step <= 0:
+            raise ValueError("fd_grid must contain distinct monotonic bins")
+        bin_radius = max(0, int(np.round(float(half_width) / doppler_step)))
+
+    start = max(0, center_idx - bin_radius)
+    end = min(fd_grid.size, center_idx + bin_radius + 1)
+    mask = np.zeros(fd_grid.size, dtype=bool)
+    mask[start:end] = True
+    return snapped_center, mask
+
+
 def project_doppler_gate(cube_db, fd_grid, center_fd, half_width, method="max"):
-    mask = np.abs(fd_grid - center_fd) <= half_width
-    if not np.any(mask):
-        raise ValueError(f"No Doppler bins inside {center_fd:g} +/- {half_width:g} Hz")
+    _, mask = select_doppler_roi(fd_grid, center_fd, half_width)
     return project_doppler_mask(cube_db, mask, method=method)
 
 
@@ -222,9 +267,8 @@ def doppler_roi_args(args, center_fd, half_width):
         args.doppler_max + 0.5 * args.doppler_step,
         args.doppler_step,
     )
-    selected = fd_grid[np.abs(fd_grid - center_fd) <= half_width]
-    if selected.size == 0:
-        raise ValueError(f"No Doppler bins inside {center_fd:g} +/- {half_width:g} Hz")
+    _, mask = select_doppler_roi(fd_grid, center_fd, half_width)
+    selected = fd_grid[mask]
 
     roi_args = copy(args)
     roi_args.doppler_min = float(selected[0])
@@ -278,14 +322,25 @@ def color_limits(values, vmin=-12.0, vmax=0.0):
     return auto_vmin, auto_vmax
 
 
-def draw_heatmap(ax, theta, tau, spectrum_db, title, strong, weak, vmin=-12.0, vmax=0.0):
+def draw_heatmap(
+    ax,
+    theta,
+    tau,
+    spectrum_db,
+    title,
+    strong,
+    weak,
+    vmin=-12.0,
+    vmax=0.0,
+    sdim=None,
+):
     values = relative_db(spectrum_db).T
     plot_vmin, plot_vmax = color_limits(values, vmin=vmin, vmax=vmax)
     mesh = ax.pcolormesh(
         theta,
         tau * 1e9,
         values,
-        cmap="turbo",
+        cmap="jet",
         shading="auto",
         vmin=plot_vmin,
         vmax=plot_vmax,
@@ -302,6 +357,8 @@ def draw_heatmap(ax, theta, tau, spectrum_db, title, strong, weak, vmin=-12.0, v
     )
     ax.set_xlabel("Azimuth (deg)")
     ax.set_ylabel("ToF (ns)")
+    if sdim is not None:
+        title += f" Sdim {int(sdim)}"
     ax.set_title(title)
     ax.legend(loc="upper right", fontsize=8)
     return mesh
@@ -408,9 +465,9 @@ def save_amplitude_comparison(
     plt.close(fig)
 
 
-def save_single(path, theta, tau, spectrum_db, title, strong, weak):
+def save_single(path, theta, tau, spectrum_db, title, strong, weak, sdim=None):
     fig, ax = plt.subplots(figsize=(7.2, 4.8), constrained_layout=True)
-    mesh = draw_heatmap(ax, theta, tau, spectrum_db, title, strong, weak)
+    mesh = draw_heatmap(ax, theta, tau, spectrum_db, title, strong, weak, sdim=sdim)
     fig.colorbar(mesh, ax=ax, label="Relative spectrum (dB)")
     fig.savefig(path, dpi=180)
     plt.close(fig)
@@ -486,7 +543,7 @@ def estimate_2d_metrics(theta, tau, spectrum_db):
 
 
 def estimate_3d_roi_metrics(theta, tau, fd_grid, cube_db, target_fd, half_width):
-    fd_mask = np.abs(fd_grid - target_fd) <= half_width
+    _, fd_mask = select_doppler_roi(fd_grid, target_fd, half_width)
     selected_fd = fd_grid[fd_mask]
     selected_cube = cube_db[:, :, fd_mask]
     azi_idx, tof_idx, fd_idx = np.unravel_index(
@@ -557,7 +614,9 @@ def print_target_diagnostics(
         roi_center_fd,
         gate_half_width,
     )
-    roi_mask = np.abs(fd_grid - roi_center_fd) <= gate_half_width
+    roi_center_fd, roi_mask = select_doppler_roi(
+        fd_grid, roi_center_fd, gate_half_width
+    )
     roi_bins = fd_grid[roi_mask]
 
     positive_raw = raw_weight[raw_weight > 0]
@@ -643,9 +702,12 @@ def print_target_diagnostics(
     )
 
 
-def prepare_base_analysis(magnitude_csi, frame_idx, args):
+def prepare_base_analysis(magnitude_csi, frame_idx, args, preprocessed=None):
     """Compute target-independent products once for one CSI dataset."""
-    background, csi_norm = normalize_magnitude(magnitude_csi, args)
+    if preprocessed is None:
+        background, csi_norm = normalize_magnitude(magnitude_csi, args)
+    else:
+        background, csi_norm = preprocessed
     theta_2d, tau_2d, azi_tof_db = azi_tof_spectrum(csi_norm, frame_idx, args)
     theta_3d, tau_3d, fd_grid, cube_db = azi_tof_doppler_cube(
         csi_norm, frame_idx, args
@@ -679,6 +741,7 @@ def target_pipeline(
     gate_half_width = float(
         getattr(args, "roi_gate_half_width", args.doppler_step)
     )
+    target_fd, _ = select_doppler_roi(fd_grid, target_fd, gate_half_width)
     roi_accumulation_db = project_doppler_gate(
         cube_db, fd_grid, target_fd, gate_half_width, method="sum"
     )
@@ -743,8 +806,7 @@ def main():
     print("3D MUSIC calls: 5 total = 1 mixed full-grid + 4 target-RoI cubes")
     print("=====================================\n")
 
-    mixed_base = prepare_base_analysis(magnitude_csi, frame_idx, args)
-    detection_csi = mixed_base["csi_norm"]
+    background, detection_csi = normalize_magnitude(magnitude_csi, args)
     original_pics_dir = args.pics_dir
     args.pics_dir = str(OUTPUT_DIR)
     try:
@@ -773,21 +835,41 @@ def main():
         detected_peak_fd, strong["fd"], association_tolerance
     )
 
-    # Keep the controlled ablation centered near the known simulated component.
-    # End-to-end detector results are reported separately above and below.
-    fd_error_weak = +0.2
-    fd_error_strong = -0.6  # 強目標誤差（可視需求調整）
+    missing_targets = [
+        label
+        for label, detected_fd in (
+            ("weak", weak_detected_fd),
+            ("strong", strong_detected_fd),
+        )
+        if detected_fd is None
+    ]
+    if missing_targets:
+        raise RuntimeError(
+            "ToF-Doppler did not detect the Doppler peak for: "
+            + ", ".join(missing_targets)
+            + ". RoI bins must come from detected ToF-Doppler peaks; "
+            "ground-truth fallback is disabled."
+        )
+
+    weak_roi_center = weak_detected_fd
+    strong_roi_center = strong_detected_fd
+    mixed_base = prepare_base_analysis(
+        magnitude_csi,
+        frame_idx,
+        args,
+        preprocessed=(background, detection_csi),
+    )
     weak_results = target_pipeline(
         magnitude_csi,
         frame_idx,
-        weak["fd"] + fd_error_weak,
+        weak_roi_center,
         args,
         base_analysis=mixed_base,
     )
     strong_target_results = target_pipeline(
         magnitude_csi,
         frame_idx,
-        strong["fd"] + fd_error_strong,
+        strong_roi_center,
         args,
         base_analysis=mixed_base,
     )
@@ -822,17 +904,17 @@ def main():
     save_single(
         OUTPUT_DIR / "01_azi_tof.png",
         theta_2d, tau_2d, azi_tof_db,
-        "Azi-ToF: all motion", strong, weak,
+        "Azi-ToF: all motion", strong, weak, sdim=args.Sdim,
     )
     save_single(
         OUTPUT_DIR / "02_azi_tof_doppler_weak_gate.png",
         theta_3d, tau_3d, unweighted_gate_db,
-        f"Azi-ToF-Doppler: {weak['fd']:+g} Hz gate", strong, weak,
+        f"Azi-ToF-Doppler: {weak['fd']:+g} Hz gate", strong, weak, sdim=args.Sdim,
     )
     save_single(
         OUTPUT_DIR / "03_widfs_weighted_azi_tof_doppler_weak_gate.png",
         theta_w, tau_w, weighted_gate_db,
-        f"Bandpass + WIDFS Azi-ToF: {weak['fd']:+g} Hz", strong, weak,
+        f"Bandpass + WIDFS Azi-ToF: {weak['fd']:+g} Hz", strong, weak, sdim=args.Sdim,
     )
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 9.2), constrained_layout=True)
@@ -881,7 +963,18 @@ def main():
         ),
     ]
     for ax, theta, tau, spectrum, title in comparison_items:
-        mesh = draw_heatmap(ax, theta, tau, spectrum, title, strong, weak, vmin=None, vmax=None)
+        mesh = draw_heatmap(
+            ax,
+            theta,
+            tau,
+            spectrum,
+            title,
+            strong,
+            weak,
+            vmin=None,
+            vmax=None,
+            sdim=args.Sdim,
+        )
         fig.colorbar(mesh, ax=ax, label="Relative spectrum (dB)", shrink=0.88)
     fig.savefig(OUTPUT_DIR / "04_comparison.png", dpi=180)
     plt.close(fig)
@@ -966,7 +1059,18 @@ def main():
         ),
     ]
     for ax, theta, tau, spectrum, title in ablation_items:
-        mesh = draw_heatmap(ax, theta, tau, spectrum, title, strong, weak, vmin=None, vmax=None)
+        mesh = draw_heatmap(
+            ax,
+            theta,
+            tau,
+            spectrum,
+            title,
+            strong,
+            weak,
+            vmin=None,
+            vmax=None,
+            sdim=args.Sdim,
+        )
         fig.colorbar(mesh, ax=ax, label="Relative spectrum (dB)", shrink=0.88)
     fig.savefig(OUTPUT_DIR / "05_widfs_ablation.png", dpi=180)
     plt.close(fig)

@@ -62,6 +62,7 @@ def plot_heatmap(
     x_axis="",
     y_axis="",
     file_suffix=None,
+    sdim=None,
 ):
     x_values, x_label = _axis_values_and_label(x_axis, np.asarray(x_values), args)
     y_values, y_label = _axis_values_and_label(y_axis, np.asarray(y_values), args)
@@ -82,7 +83,10 @@ def plot_heatmap(
     plt.grid(which="minor", color="w", linestyle="-", linewidth=0.5, alpha=0.2)
     plt.xlabel(x_label)
     plt.ylabel(y_label)
-    plt.title(title + " @ frame " + str(frame_idx), fontsize=8)
+    full_title = title + " @ frame " + str(frame_idx)
+    if sdim is not None:
+        full_title += " Sdim " + str(int(sdim))
+    plt.title(full_title, fontsize=8)
 
     save_dir = args.pics_dir
     if save_dir is not None:
@@ -103,9 +107,10 @@ def plot_spectrum(
     P_music,
     args,
     title="",
-    cmap='turbo',
+    cmap='jet',
     x_axis=None,
     y_axis=None,
+    sdim=None,
 ):
     #peaks = find_Peaks.find_AoA_ToF_peaks(P_music, theta, tau)
     tau = np.asarray(tau)
@@ -165,7 +170,10 @@ def plot_spectrum(
 
     plt.xlabel(x_label)
     plt.ylabel(y_label)
-    plt.title(title + ' @ frame ' + str(frame_idx), fontsize = 8)
+    full_title = title + ' @ frame ' + str(frame_idx)
+    if sdim is not None:
+        full_title += ' Sdim ' + str(int(sdim))
+    plt.title(full_title, fontsize = 8)
 
     # --- save figures ---
     save_dir = args.pics_dir

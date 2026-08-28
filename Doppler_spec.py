@@ -1,5 +1,6 @@
 import os
 import MUSIC
+import Plot
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.signal import find_peaks, stft
@@ -369,6 +370,20 @@ def gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="sum", tx=0):
         return None
 
     tau, fd, P_tof_dop = tof_dop.cal_spectrum(Rxx)
+    tof_doppler_db = 10.0 * np.log10(np.maximum(P_tof_dop, 1e-12))
+
+    Plot.plot_heatmap(
+        frame_idx,
+        fd,
+        tau,
+        tof_doppler_db,
+        args,
+        title="ToF-Doppler (dB)",
+        x_axis="doppler",
+        y_axis="tof",
+        file_suffix="tof_doppler_heatmap",
+        sdim=tof_dop.last_Sdim,
+    )
 
     if method == "sum":
         spectrum = np.sum(P_tof_dop, axis=0)

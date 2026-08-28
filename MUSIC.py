@@ -34,24 +34,32 @@ def estimate_Sdim(Rxx, energy_ratio=0.88, min_dim=1, max_dim=None):
     Sdim = np.searchsorted(cumulative, energy_ratio) + 1
     return int(np.clip(Sdim, min_dim, max_dim))
 
-def resolve_Sdim(args, eig_val, label="MUSIC"):
+def resolve_Sdim(
+    args,
+    eig_val,
+    label="MUSIC",
+    sdim_attr="Sdim",
+    energy_ratio_attr="Sdim_energy_ratio",
+):
     M = len(eig_val)
 
-    if getattr(args, "Sdim", None) is not None:
-        Sdim = int(args.Sdim)
+    if getattr(args, sdim_attr, None) is not None:
+        Sdim = int(getattr(args, sdim_attr))
     else:
         energy_ratio = getattr(
             args,
-            "Sdim_energy_ratio",
+            energy_ratio_attr,
             getattr(args, "Sdim_energy_ratio", 0.88),
         )
+        if energy_ratio is None:
+            energy_ratio = getattr(args, "Sdim_energy_ratio", 0.88)
         Sdim = estimate_Sdim(
             eig_val,
             energy_ratio=energy_ratio,
             min_dim=getattr(args, "Sdim_min", 1),
             max_dim=M - 1,
         )
-        print(f"Estimated Sdim={Sdim} (energy_ratio={energy_ratio:.2f})")
+        print(f"{label}: Estimated Sdim={Sdim} (energy_ratio={energy_ratio:.2f})")
 
     Sdim = int(np.clip(Sdim, 1, M - 1))
     return Sdim
@@ -164,6 +172,7 @@ class Azi_ToF:
         self.freq_hop = args.freq_hop
         self.freq_sample_range = min(args.freq_sample_range, args.num_subcarriers)
         self.Sdim = args.Sdim
+        self.last_Sdim = None
         self.tau = np.arange(args.tau_min, args.tau_max, args.tau_step)
         self.theta = np.arange(args.theta_min, args.theta_max + 1, args.theta_step)
 
@@ -226,6 +235,7 @@ class Azi_ToF:
             title="Azi-ToF",
             x_axis=x_axis,
             y_axis=y_axis,
+            sdim=self.last_Sdim,
         )
 
     def smooth_csi(self, csi):
@@ -291,6 +301,7 @@ class Azi_ToF:
 
         # Noise subspace
         Sdim = resolve_Sdim(self.args, eig_val)
+        self.last_Sdim = Sdim
         #print(f"Selected signal subspace dimension Sdim={Sdim}.")
         #print(f"top 20 eigen vals{eig_val[:20]}")
         N_dim = eig_val.shape[0] - Sdim
@@ -351,7 +362,8 @@ class ToF_Dop:
     def __init__(self, args):
         self.args = args
         self.steering_vector = SteeringVector(args)
-        self.Sdim = getattr(args, "Sdim", None)
+        self.Sdim = getattr(args, "tof_dop_Sdim", None)
+        self.last_Sdim = None
         self.num_Rx = getattr(args, "num_Rx", None)
         self.num_subcarriers = int(args.num_subcarriers)
         self.freq_win = int(args.freq_win)
@@ -482,9 +494,16 @@ class ToF_Dop:
 
         # Signal subspace projection, same convention as XMUSIC_ToF_Dop/Guan.
         if self.Sdim is None:
-            Sdim = resolve_Sdim(self.args, eig_val, label="ToF-Doppler")
+            Sdim = resolve_Sdim(
+                self.args,
+                eig_val,
+                label="ToF-Doppler",
+                sdim_attr="tof_dop_Sdim",
+                energy_ratio_attr="tof_dop_Sdim_energy_ratio",
+            )
         else:
             Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
+        self.last_Sdim = Sdim
         E_s = eig_vec[:, :Sdim]
 
         tau = self.tau_grid
@@ -509,15 +528,17 @@ class ToF_Dop:
         if Rxx is None:
             return
         tau, fd, P_tof_dop = self.cal_spectrum(Rxx)
+        P_tof_dop_db = 10.0 * np.log10(np.maximum(P_tof_dop, 1e-12))
         Plot.plot_spectrum(
             frame_idx,
             tau,
             fd,
-            P_tof_dop.T,
+            P_tof_dop_db.T,
             self.args,
-            title="ToF-Doppler",
+            title="ToF-Doppler (dB)",
             x_axis=x_axis,
             y_axis=y_axis,
+            sdim=self.last_Sdim,
         )
 
 class Azi_Dop:
@@ -525,6 +546,7 @@ class Azi_Dop:
         self.args = args
         self.steering_vector = SteeringVector(args)
         self.Sdim = getattr(args, "Sdim", None)
+        self.last_Sdim = None
         self.stream_win = int(args.stream_win)
         self.stream_sample_range = int(min(args.stream_sample_range, args.num_Rx))
         self.freq_sample_range = int(
@@ -659,6 +681,7 @@ class Azi_Dop:
             Sdim = resolve_Sdim(self.args, eig_val, label="Azi-Doppler")
         else:
             Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
+        self.last_Sdim = Sdim
         E_n = eig_vec[:, Sdim:]
         if E_n.size == 0:
             E_n = eig_vec[:, -1:]
@@ -691,6 +714,7 @@ class Azi_Dop:
             x_axis=x_axis,
             y_axis=y_axis,
             file_suffix="azi_doppler",
+            sdim=self.last_Sdim,
         )
 
 class Azi_DopX:
@@ -698,6 +722,7 @@ class Azi_DopX:
         self.args = args
         self.steering_vector = SteeringVector(args)
         self.Sdim = getattr(args, "Sdim", None)
+        self.last_Sdim = None
         
         # Window sizes for smoothing
         self.stream_win = int(args.stream_win)
@@ -858,6 +883,7 @@ class Azi_DopX:
             Sdim = resolve_Sdim(self.args, eig_val, label="Azi-Doppler")
         else:
             Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
+        self.last_Sdim = Sdim
             
         E_n = eig_vec[:, Sdim:]
         if E_n.size == 0:
@@ -897,6 +923,7 @@ class Azi_DopX:
             x_axis=x_axis,
             y_axis=y_axis,
             file_suffix="azi_doppler",
+            sdim=self.last_Sdim,
         )
 
 
@@ -905,6 +932,7 @@ class Azi_ToF_Dop:
         self.args = args
         self.steering_vector = SteeringVector(args)
         self.Sdim = getattr(args, "Sdim", None)
+        self.last_Sdim = None
         
         self.num_Rx = args.num_Rx
         self.num_subcarriers = args.num_subcarriers
@@ -1011,6 +1039,7 @@ class Azi_ToF_Dop:
             Sdim = resolve_Sdim(self.args, eig_val, label="Azi-ToF-Doppler")
         else:
             Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
+        self.last_Sdim = Sdim
             
         E_n = eig_vec[:, Sdim:]
         if E_n.size == 0:
@@ -1164,6 +1193,7 @@ class Azi_ToF_Dop:
                 x_axis=x_axis,
                 y_axis=y_axis,
                 file_suffix=file_suffix,
+                sdim=self.last_Sdim,
             )
             fig = plt.gcf()
             ax = plt.gca()

@@ -43,18 +43,20 @@ def signal_processing(raw_CSI, args):
     azi_tof_dop = MUSIC.Azi_ToF_Dop(args)
 
     
-    frame_idx = 1300
+    frame_idx = args.frame_idx
 
     print(f"Processing Frame {frame_idx}... ")
 
     #Doppler_spec.gen_spectrogram(CSI, args)
     #Doppler_spec.gen_spectrum(CSI, frame_idx)
-    Doppler_spec.gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="max")
+    # Use all TX channels so this branch builds the same ToF-Doppler
+    # covariance matrix as tof_dop.gen_spectrum(...) below.
+    Doppler_spec.gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="max", tx=None)
     #Doppler_spec.gen_spectrum_from_ToF_Doppler_Rx_diff(CSI, frame_idx, args, method="max")
     
     #azi_tof_dop.gen_spectrum(CSI, frame_idx=1300, x_axis="azi", y_axis="tof", method="sum",z_range=None)
     azi_tof.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="tof")
-    tof_dop.gen_spectrum(CSI, frame_idx, x_axis="doppler", y_axis="tof")
+    #tof_dop.gen_spectrum(CSI, frame_idx, x_axis="doppler", y_axis="tof")
     #azi_dop.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="doppler")
 
 

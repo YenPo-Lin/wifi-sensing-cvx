@@ -30,7 +30,9 @@ def create_parser():
     parser.add_argument('--frame_idx', type=int, default=1300)
     # MUSIC signal dimension
     parser.add_argument('--Sdim', type=int, default=None)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.77)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.8)
+    parser.add_argument('--tof_dop_Sdim', type=int, default=None)
+    parser.add_argument('--tof_dop_Sdim_energy_ratio', type=float, default=None)
     parser.add_argument('--avg_frames', type=int, default=50)
     parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
