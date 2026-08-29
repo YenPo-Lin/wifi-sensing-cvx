@@ -321,10 +321,7 @@ def dfs_weighted_heatmap(raw_CSI, args):
     heatmap_results = azi_tof_dop.gen_spectrum(
         CSI_weighted,
         frame_idx=frame_idx,
-        x_axis="azi",
-        y_axis="tof",
         method=getattr(args, "widfs_heatmap_projection_method", "max"),
-        z_range=signed_gates,
     )
 
     return {

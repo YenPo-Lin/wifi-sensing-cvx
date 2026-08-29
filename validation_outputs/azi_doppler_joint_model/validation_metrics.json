@@ -1,0 +1,107 @@
+{
+  "injected_target": {
+    "theta_deg": 110.0,
+    "fd_hz": 8.0,
+    "num_rx": 8,
+    "antenna_spacing_m": 0.02,
+    "fs_hz": 100.0
+  },
+  "current_covariance": {
+    "context_start": 96,
+    "context_end": 160,
+    "context_len": 64,
+    "dop_win": 24,
+    "stream_win": 5,
+    "time_slides": 40,
+    "stream_slides": 4,
+    "subcarriers": 64,
+    "snapshots": 10240,
+    "vector_size": 120
+  },
+  "paper_covariance": {
+    "context_start": 103,
+    "context_end": 153,
+    "context_len": 50,
+    "dop_win": 25,
+    "stream_win": 5,
+    "time_slides": 26,
+    "stream_slides": 4,
+    "subcarriers": 64,
+    "snapshots": 6656,
+    "vector_size": 125
+  },
+  "separable_covariance": {
+    "context_start": 103,
+    "context_end": 153,
+    "context_len": 50,
+    "dop_win": 25,
+    "stream_win": 5,
+    "time_slides": 26,
+    "stream_slides": 4,
+    "subcarriers": 64,
+    "snapshots": 6656,
+    "vector_size": 125
+  },
+  "spectra": {
+    "Current pipeline |H| residual, sign -": {
+      "peak_theta_deg": 110.0,
+      "peak_fd_hz": -8.0,
+      "peak_db": 57.86490740722623,
+      "true_theta_positive_fd_db": 30.815187661778268,
+      "true_theta_negative_fd_db": 57.86490740722623,
+      "positive_minus_negative_db": -27.04971974544796
+    },
+    "Current pipeline |H| residual, sign +": {
+      "peak_theta_deg": 110.0,
+      "peak_fd_hz": 8.0,
+      "peak_db": 57.86490740722287,
+      "true_theta_positive_fd_db": 57.86490740722287,
+      "true_theta_negative_fd_db": 30.815187661778054,
+      "positive_minus_negative_db": 27.04971974544482
+    },
+    "Paper T=50/25, spatial sign +": {
+      "peak_theta_deg": 110.0,
+      "peak_fd_hz": 8.0,
+      "peak_db": 54.90084311119553,
+      "true_theta_positive_fd_db": 54.90084311119553,
+      "true_theta_negative_fd_db": 30.834486431605153,
+      "positive_minus_negative_db": 24.066356679590374
+    },
+    "Paper T=50/25, spatial sign -": {
+      "peak_theta_deg": 110.0,
+      "peak_fd_hz": -8.0,
+      "peak_db": 54.90084311119553,
+      "true_theta_positive_fd_db": 30.834486431605153,
+      "true_theta_negative_fd_db": 54.90084311119553,
+      "positive_minus_negative_db": -24.066356679590374
+    },
+    "Separable control, spatial sign +": {
+      "peak_theta_deg": 110.0,
+      "peak_fd_hz": -8.0,
+      "peak_db": 36.80270378419275,
+      "true_theta_positive_fd_db": 36.50796422513115,
+      "true_theta_negative_fd_db": 36.80270378419275,
+      "positive_minus_negative_db": -0.294739559061604
+    },
+    "Separable control, spatial sign -": {
+      "peak_theta_deg": 110.0,
+      "peak_fd_hz": 8.0,
+      "peak_db": 36.80270378419275,
+      "true_theta_positive_fd_db": 36.80270378419275,
+      "true_theta_negative_fd_db": 36.50796422513115,
+      "positive_minus_negative_db": 0.294739559061604
+    }
+  },
+  "checks": {
+    "current_covariance_matches_independent_builder": true,
+    "current_spectrum_matches_negative_sign_builder": true,
+    "current_covariance_shape": [
+      120,
+      120
+    ],
+    "paper_covariance_shape": [
+      125,
+      125
+    ]
+  }
+}

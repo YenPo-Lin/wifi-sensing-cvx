@@ -14,17 +14,17 @@ def sample_subcarriers(args, CSI, freq_space=16):
     freq_space=16
     BW=160MHz, K=2025//16=126, delta_f=1.269MHz
     """
-    num_subc = CSI.shape[-1] # 原本是 2025
+    num_sc = CSI.shape[-1] # 原本是 2025
     sampled_CSI = CSI[..., ::freq_space]
-    indices = np.arange(0, num_subc, freq_space)
+    indices = np.arange(0, num_sc, freq_space)
     sampled_CSI = CSI[..., indices]
     actual_K = len(indices)
-    original_delta_f = args.BW / num_subc
+    original_delta_f = args.BW / num_sc
     new_delta_f = original_delta_f * freq_space
     effective_BW = (actual_K - 1) * new_delta_f
     if args is not None:
         args.delta_f = new_delta_f
-        args.num_subcarriers = actual_K
+        args.num_scarriers = actual_K
 
     print(f"[Sampling] K: {actual_K} | Δf: {new_delta_f/1e6:.2f}MHz | BW: {effective_BW/1e6:.1f}MHz")
 
@@ -43,7 +43,7 @@ def plot_amp_DWT_components_time(
     對單一 Tx/Rx/Subcarrier 的 amplitude-time signal 做 DWT，
     並把 approximation/detail components 分橫列畫出來。
 
-    CSI shape: (num_frames, num_tx, num_rx, num_subcarriers)
+    CSI shape: (num_frames, num_tx, num_rx, num_scarriers)
     """
 
     # 1. 取 amplitude time-series

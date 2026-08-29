@@ -12,7 +12,7 @@ def create_parser():
     parser = argparse.ArgumentParser()
 
     # npz 文件路徑
-    file_path = "/Users/YPL/Documents/NPZ_files/20260821-125845_big_swing.npz"
+    file_path = "/Users/YPL/Documents/NPZ_files/20260820-172856_move_fb.npz"
     parser.add_argument('--csi_file', type=str, default=file_path)
     
     # ---- CSI parameters ----
@@ -27,12 +27,10 @@ def create_parser():
     # ---- MUSIC settings ----
     parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'dwt', 'pca'])
     # plotted frame
-    parser.add_argument('--frame_idx', type=int, default=1300)
+    parser.add_argument('--frame_idx', type=int, default=660)
     # MUSIC signal dimension
-    parser.add_argument('--Sdim', type=int, default=None)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.8)
-    parser.add_argument('--tof_dop_Sdim', type=int, default=None)
-    parser.add_argument('--tof_dop_Sdim_energy_ratio', type=float, default=None)
+    parser.add_argument('--Sdim', type=int, default=3)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.33)
     parser.add_argument('--avg_frames', type=int, default=50)
     parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
@@ -45,22 +43,22 @@ def create_parser():
     parser.add_argument('--freq_space', type=int, default=1) # if freq resampling
 
 
-    parser.add_argument('--time_win', type=int, default=24)
+    parser.add_argument('--time_win', type=int, default=25)
     parser.add_argument('--time_hop', type=int, default=1)
-    parser.add_argument('--time_sample_range', type=int, default=100) #100 frames
+    parser.add_argument('--time_sample_range', type=int, default=50) #100 frames
 
     # Azimuth grid
     parser.add_argument('--theta_min', type=float, default= 0)
     parser.add_argument('--theta_max', type=float, default= 180)
     parser.add_argument('--theta_step', type=int, default=3)
     # Time of Flight grid
-    parser.add_argument('--axis', type=str, default='ns', choices=['ns', 'm'])
+    parser.add_argument('--axis', type=str, default='m', choices=['ns', 'm'])
     parser.add_argument('--tau_min', type=float, default=2e-9)
     parser.add_argument('--tau_max', type=float, default=20e-9)
     parser.add_argument('--tau_step', type=float, default=3e-10)
     # Doppler grid
-    parser.add_argument('--doppler_min', type=float, default=-30)
-    parser.add_argument('--doppler_max', type=float, default=30)
+    parser.add_argument('--doppler_min', type=float, default=-20)
+    parser.add_argument('--doppler_max', type=float, default=20)
     parser.add_argument('--doppler_step', type=float, default=1)
 
     # Doppler spectrogram settings
@@ -125,8 +123,8 @@ if __name__ == '__main__':
     args.num_frames = CSI.shape[0]
     args.num_Tx = CSI.shape[1]
     args.num_Rx = CSI.shape[2]
-    args.num_subcarriers = CSI.shape[3]
-    #args.delta_f = args.BW / args.num_subcarriers
+    args.num_scarriers = CSI.shape[3]
+    #args.delta_f = args.BW / args.num_scarriers
     
     print(f"✅ CSI{CSI.shape} | Frames:{args.num_frames/args.fs:.2f}s | Fs:{args.fs}Hz")
 
@@ -135,8 +133,8 @@ if __name__ == '__main__':
     start = time.time()
 
     #WIDFS.dfs_weighted_heatmap(CSI, args)
-    WIDFS.dfs_weighted_heatmap(CSI, args)
-    #signal_processing(CSI, args)
+    #WIDFS.dfs_weighted_heatmap(CSI, args)
+    signal_processing(CSI, args)
     
     elapsed_time = time.time() - start
     print(f"🥶 End Signal Processing: {elapsed_time:.2f} (s)")

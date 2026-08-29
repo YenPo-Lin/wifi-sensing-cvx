@@ -80,7 +80,7 @@ def plot_heatmap(
 
     plt.gca().set_xticks(x_values, minor=True)
     plt.gca().set_yticks(y_values, minor=True)
-    plt.grid(which="minor", color="w", linestyle="-", linewidth=0.5, alpha=0.2)
+    plt.grid(which="minor", color="w", linestyle="-", linewidth=0.5, alpha=0.1)
     plt.xlabel(x_label)
     plt.ylabel(y_label)
     full_title = title + " @ frame " + str(frame_idx)
@@ -102,8 +102,8 @@ def plot_heatmap(
 
 def plot_spectrum(
     frame_idx,
-    tau,
-    theta,
+    axis0_values,
+    axis1_values,
     P_music,
     args,
     title="",
@@ -111,41 +111,57 @@ def plot_spectrum(
     x_axis=None,
     y_axis=None,
     sdim=None,
+    spectrum_axes=None,
+    ax=None,
+    save=True,
+    show_colorbar=None,
 ):
-    #peaks = find_Peaks.find_AoA_ToF_peaks(P_music, theta, tau)
-    tau = np.asarray(tau)
-    theta = np.asarray(theta)
+    axis0_values = np.asarray(axis0_values)
+    axis1_values = np.asarray(axis1_values)
     P_music = np.asarray(P_music)
 
-    if x_axis == "":
-        x_axis = None
-    if y_axis == "":
-        y_axis = None
+    if spectrum_axes is None or len(spectrum_axes) != 2:
+        raise ValueError(
+            "spectrum_axes=(axis0, axis1) is required for plot_spectrum."
+        )
+    axis0, axis1 = map(_normalize_axis_name, spectrum_axes)
+    if axis0 == axis1:
+        raise ValueError(f"spectrum_axes must be different, got {spectrum_axes}")
 
-    if x_axis is None and y_axis is None:
-        axis_flip = getattr(args, "axis_flip", False)
-        if axis_flip:
-            x_axis, y_axis = "azi", "tof"
-        else:
-            x_axis, y_axis = "tof", "azi"
-    elif x_axis is None or y_axis is None:
+    expected_spectrum_shape = (len(axis0_values), len(axis1_values))
+    if P_music.shape != expected_spectrum_shape:
+        raise ValueError(
+            f"Expected spectrum shape {expected_spectrum_shape} for "
+            f"spectrum_axes=({axis0}, {axis1}), but got {P_music.shape}."
+        )
+
+    if x_axis in (None, "") and y_axis in (None, ""):
+        x_axis, y_axis = axis1, axis0
+    elif x_axis in (None, "") or y_axis in (None, ""):
         raise ValueError("x_axis and y_axis must be provided together.")
-
     x_axis = _normalize_axis_name(x_axis)
     y_axis = _normalize_axis_name(y_axis)
-    if x_axis == y_axis:
-        raise ValueError(f"x_axis and y_axis must be different, got {x_axis}")
-    if "tof" not in (x_axis, y_axis):
-        raise ValueError("One axis must be 'tof' because the first spectrum axis is tau.")
+    if {x_axis, y_axis} != {axis0, axis1}:
+        raise ValueError(
+            f"Requested axes ({x_axis}, {y_axis}) do not match "
+            f"spectrum_axes=({axis0}, {axis1})."
+        )
 
-    if x_axis == "tof":
-        x_values, x_label = _axis_values_and_label(x_axis, tau, args)
-        y_values, y_label = _axis_values_and_label(y_axis, theta, args)
-        plot_values = P_music
-    else:
-        x_values, x_label = _axis_values_and_label(x_axis, theta, args)
-        y_values, y_label = _axis_values_and_label(y_axis, tau, args)
-        plot_values = P_music.T
+    values_by_axis = {
+        axis0: axis0_values,
+        axis1: axis1_values,
+    }
+    x_values, x_label = _axis_values_and_label(
+        x_axis,
+        values_by_axis[x_axis],
+        args,
+    )
+    y_values, y_label = _axis_values_and_label(
+        y_axis,
+        values_by_axis[y_axis],
+        args,
+    )
+    plot_values = P_music.T if x_axis == axis0 else P_music
 
     expected_shape = (len(y_values), len(x_values))
     if plot_values.shape != expected_shape:
@@ -155,33 +171,44 @@ def plot_spectrum(
             f"for x_axis={x_axis}, y_axis={y_axis}."
         )
 
-    plt.figure()
-    plt.pcolormesh(x_values, y_values, plot_values, cmap=cmap, shading='auto')
-    if args.colorbar:
-        plt.colorbar()
+    if ax is None:
+        _, ax = plt.subplots()
+    mesh = ax.pcolormesh(
+        x_values,
+        y_values,
+        plot_values,
+        cmap=cmap,
+        shading='auto',
+    )
+    if show_colorbar is None:
+        show_colorbar = bool(args.colorbar)
+    if show_colorbar:
+        ax.figure.colorbar(mesh, ax=ax)
     '''
     for o in range(len(args.x_obj)):
         plt.scatter(args.gt_taus[o][frame_idx], args.gt_AoAs[o][frame_idx], marker='x', s=50,color = obj_colors[o])
     '''
     # 畫出網格線 (選擇性開啟，用於觀察 Grid Refinement 的分佈)
-    plt.gca().set_xticks(x_values, minor=True)
-    plt.gca().set_yticks(y_values, minor=True)
-    plt.grid(which='minor', color='w', linestyle='-', linewidth=0.5, alpha=0.2)
+    ax.set_xticks(x_values, minor=True)
+    ax.set_yticks(y_values, minor=True)
+    ax.grid(which='minor', color='w', linestyle='-', linewidth=0.5, alpha=0.2)
 
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
+    ax.set_xlabel(x_label)
+    ax.set_ylabel(y_label)
     full_title = title + ' @ frame ' + str(frame_idx)
     if sdim is not None:
         full_title += ' Sdim ' + str(int(sdim))
-    plt.title(full_title, fontsize = 8)
+    ax.set_title(full_title, fontsize=8)
 
     # --- save figures ---
     save_dir = args.pics_dir
-    if save_dir is not None:
+    if save and save_dir is not None:
         os.makedirs(save_dir, exist_ok=True)
         save_path = os.path.join(
             save_dir, f"{frame_idx:04d}.png"
         )
-        plt.savefig(save_path, dpi=100)
-        plt.close()
+        ax.figure.savefig(save_path, dpi=100)
+        plt.close(ax.figure)
         print(f"Saved: {save_path}")
+
+    return ax

@@ -1,0 +1,335 @@
+{
+  "source": "/Users/YPL/Documents/NPZ_files/20260820-172924_move_lr.npz",
+  "frame": 444,
+  "shape": [
+    986,
+    2,
+    8,
+    64
+  ],
+  "f0_hz": 5570000000.0,
+  "antenna_spacing_m": 0.02,
+  "wavelength_m": 0.05385996409335727,
+  "q_self": 1.3464991023339317,
+  "theta_self_conjugate_deg": 110.27333343425848,
+  "antenna_order": [
+    0,
+    1,
+    4,
+    5,
+    6,
+    7,
+    2,
+    3
+  ],
+  "loss_rate": [
+    0.0,
+    0.002028397565922921,
+    0.005070993914807302,
+    0.006085192697768763
+  ],
+  "estimators": {
+    "Amplitude residual": {
+      "tx_0": {
+        "metadata": {
+          "context": [
+            419,
+            469
+          ],
+          "tx_idx": 0,
+          "num_rx": 8,
+          "num_sc": 64,
+          "input_time_win": 50,
+          "dop_win": 25,
+          "num_stream_slides": 4,
+          "num_time_slides": 25,
+          "snapshots_per_subcarrier": 100,
+          "covariance_count": 64,
+          "num_snapshots": 6400,
+          "vec_len": 125,
+          "Sdim": 9
+        },
+        "peak_theta_deg": 127.0,
+        "peak_fd_hz": 2.0,
+        "theta_self_grid_deg": 110.0,
+        "same_angle_mirror_mean_abs_db": 0.042846082317963385,
+        "same_angle_mirror_max_abs_db": 0.14158588976340614,
+        "covariance_imaginary_ratio": 0.0,
+        "conjugate_alias_identity": {
+          "valid_theta_min_deg": 73.0,
+          "valid_theta_max_deg": 180.0,
+          "mean_abs_db": 0.01761776003965426,
+          "max_abs_db": 0.2844919679482487
+        }
+      },
+      "tx_1": {
+        "metadata": {
+          "context": [
+            419,
+            469
+          ],
+          "tx_idx": 1,
+          "num_rx": 8,
+          "num_sc": 64,
+          "input_time_win": 50,
+          "dop_win": 25,
+          "num_stream_slides": 4,
+          "num_time_slides": 25,
+          "snapshots_per_subcarrier": 100,
+          "covariance_count": 64,
+          "num_snapshots": 6400,
+          "vec_len": 125,
+          "Sdim": 5
+        },
+        "peak_theta_deg": 68.0,
+        "peak_fd_hz": 2.0,
+        "theta_self_grid_deg": 110.0,
+        "same_angle_mirror_mean_abs_db": 0.0038091712382380656,
+        "same_angle_mirror_max_abs_db": 0.01842331185019974,
+        "covariance_imaginary_ratio": 0.0,
+        "conjugate_alias_identity": {
+          "valid_theta_min_deg": 73.0,
+          "valid_theta_max_deg": 180.0,
+          "mean_abs_db": 0.006337181994880467,
+          "max_abs_db": 0.13375814319901957
+        }
+      }
+    },
+    "Power residual (current)": {
+      "tx_0": {
+        "metadata": {
+          "context": [
+            419,
+            469
+          ],
+          "tx_idx": 0,
+          "num_rx": 8,
+          "num_sc": 64,
+          "input_time_win": 50,
+          "dop_win": 25,
+          "num_stream_slides": 4,
+          "num_time_slides": 25,
+          "snapshots_per_subcarrier": 100,
+          "covariance_count": 64,
+          "num_snapshots": 6400,
+          "vec_len": 125,
+          "Sdim": 9
+        },
+        "peak_theta_deg": 145.0,
+        "peak_fd_hz": -2.0,
+        "theta_self_grid_deg": 110.0,
+        "same_angle_mirror_mean_abs_db": 0.029172740051519454,
+        "same_angle_mirror_max_abs_db": 0.08736274736281824,
+        "covariance_imaginary_ratio": 0.0,
+        "conjugate_alias_identity": {
+          "valid_theta_min_deg": 73.0,
+          "valid_theta_max_deg": 180.0,
+          "mean_abs_db": 0.017209889909753442,
+          "max_abs_db": 0.2713787138201109
+        }
+      },
+      "tx_1": {
+        "metadata": {
+          "context": [
+            419,
+            469
+          ],
+          "tx_idx": 1,
+          "num_rx": 8,
+          "num_sc": 64,
+          "input_time_win": 50,
+          "dop_win": 25,
+          "num_stream_slides": 4,
+          "num_time_slides": 25,
+          "snapshots_per_subcarrier": 100,
+          "covariance_count": 64,
+          "num_snapshots": 6400,
+          "vec_len": 125,
+          "Sdim": 5
+        },
+        "peak_theta_deg": 66.0,
+        "peak_fd_hz": 2.0,
+        "theta_self_grid_deg": 110.0,
+        "same_angle_mirror_mean_abs_db": 0.002285865857248338,
+        "same_angle_mirror_max_abs_db": 0.011778078744780651,
+        "covariance_imaginary_ratio": 0.0,
+        "conjugate_alias_identity": {
+          "valid_theta_min_deg": 73.0,
+          "valid_theta_max_deg": 180.0,
+          "mean_abs_db": 0.0056854485974256784,
+          "max_abs_db": 0.1408105171414693
+        }
+      }
+    },
+    "Complex residual": {
+      "tx_0": {
+        "metadata": {
+          "context": [
+            419,
+            469
+          ],
+          "tx_idx": 0,
+          "num_rx": 8,
+          "num_sc": 64,
+          "input_time_win": 50,
+          "dop_win": 25,
+          "num_stream_slides": 4,
+          "num_time_slides": 25,
+          "snapshots_per_subcarrier": 100,
+          "covariance_count": 64,
+          "num_snapshots": 6400,
+          "vec_len": 125,
+          "Sdim": 17
+        },
+        "peak_theta_deg": 107.0,
+        "peak_fd_hz": -9.0,
+        "theta_self_grid_deg": 110.0,
+        "same_angle_mirror_mean_abs_db": 1.2911625396869064,
+        "same_angle_mirror_max_abs_db": 3.902407028124894,
+        "covariance_imaginary_ratio": 0.2460570249090014,
+        "conjugate_alias_identity": {
+          "valid_theta_min_deg": 73.0,
+          "valid_theta_max_deg": 180.0,
+          "mean_abs_db": 0.9497543115470649,
+          "max_abs_db": 5.119692157049539
+        }
+      },
+      "tx_1": {
+        "metadata": {
+          "context": [
+            419,
+            469
+          ],
+          "tx_idx": 1,
+          "num_rx": 8,
+          "num_sc": 64,
+          "input_time_win": 50,
+          "dop_win": 25,
+          "num_stream_slides": 4,
+          "num_time_slides": 25,
+          "snapshots_per_subcarrier": 100,
+          "covariance_count": 64,
+          "num_snapshots": 6400,
+          "vec_len": 125,
+          "Sdim": 15
+        },
+        "peak_theta_deg": 115.0,
+        "peak_fd_hz": -9.0,
+        "theta_self_grid_deg": 110.0,
+        "same_angle_mirror_mean_abs_db": 1.691043754999466,
+        "same_angle_mirror_max_abs_db": 6.096972071175603,
+        "covariance_imaginary_ratio": 0.2695431858205139,
+        "conjugate_alias_identity": {
+          "valid_theta_min_deg": 73.0,
+          "valid_theta_max_deg": 180.0,
+          "mean_abs_db": 1.0450713280237174,
+          "max_abs_db": 6.442066020284427
+        }
+      }
+    }
+  },
+  "adjacent_rx_complex_phase": {
+    "tx_0": {
+      "rx_0_1": {
+        "pair_type": "same_card",
+        "phase_resultant_coherence": 0.9960805773735046,
+        "phase_step_std_rad": 0.10548292100429535,
+        "phase_step_p95_abs_rad": 0.20105110108852386,
+        "unwrapped_phase_range_rad": 0.5314041376113892
+      },
+      "rx_1_2": {
+        "pair_type": "cross_card",
+        "phase_resultant_coherence": 0.01243792474269867,
+        "phase_step_std_rad": 1.8229560852050781,
+        "phase_step_p95_abs_rad": 3.000265598297119,
+        "unwrapped_phase_range_rad": 93.10977172851562
+      },
+      "rx_2_3": {
+        "pair_type": "same_card",
+        "phase_resultant_coherence": 0.8940469026565552,
+        "phase_step_std_rad": 0.3676406741142273,
+        "phase_step_p95_abs_rad": 0.8696169853210449,
+        "unwrapped_phase_range_rad": 2.23043155670166
+      },
+      "rx_3_4": {
+        "pair_type": "cross_card",
+        "phase_resultant_coherence": 0.03684510290622711,
+        "phase_step_std_rad": 1.8135719299316406,
+        "phase_step_p95_abs_rad": 2.997239351272583,
+        "unwrapped_phase_range_rad": 72.87498474121094
+      },
+      "rx_4_5": {
+        "pair_type": "same_card",
+        "phase_resultant_coherence": 0.9953147172927856,
+        "phase_step_std_rad": 0.11301056295633316,
+        "phase_step_p95_abs_rad": 0.219282865524292,
+        "unwrapped_phase_range_rad": 0.7270231246948242
+      },
+      "rx_5_6": {
+        "pair_type": "cross_card",
+        "phase_resultant_coherence": 0.02004236914217472,
+        "phase_step_std_rad": 1.8556294441223145,
+        "phase_step_p95_abs_rad": 3.010197401046753,
+        "unwrapped_phase_range_rad": 125.64495086669922
+      },
+      "rx_6_7": {
+        "pair_type": "same_card",
+        "phase_resultant_coherence": 0.984404981136322,
+        "phase_step_std_rad": 0.24994227290153503,
+        "phase_step_p95_abs_rad": 0.32800376415252686,
+        "unwrapped_phase_range_rad": 2.922560691833496
+      }
+    },
+    "tx_1": {
+      "rx_0_1": {
+        "pair_type": "same_card",
+        "phase_resultant_coherence": 0.9998732805252075,
+        "phase_step_std_rad": 0.014637088403105736,
+        "phase_step_p95_abs_rad": 0.027149487286806107,
+        "unwrapped_phase_range_rad": 0.1565415859222412
+      },
+      "rx_1_2": {
+        "pair_type": "cross_card",
+        "phase_resultant_coherence": 0.010689032264053822,
+        "phase_step_std_rad": 1.8043148517608643,
+        "phase_step_p95_abs_rad": 2.9766287803649902,
+        "unwrapped_phase_range_rad": 103.58039093017578
+      },
+      "rx_2_3": {
+        "pair_type": "same_card",
+        "phase_resultant_coherence": 0.9517328143119812,
+        "phase_step_std_rad": 0.22800804674625397,
+        "phase_step_p95_abs_rad": 0.6546563506126404,
+        "unwrapped_phase_range_rad": 0.8600199222564697
+      },
+      "rx_3_4": {
+        "pair_type": "cross_card",
+        "phase_resultant_coherence": 0.014575502835214138,
+        "phase_step_std_rad": 1.6883823871612549,
+        "phase_step_p95_abs_rad": 2.9221978187561035,
+        "unwrapped_phase_range_rad": 204.62942504882812
+      },
+      "rx_4_5": {
+        "pair_type": "same_card",
+        "phase_resultant_coherence": 0.9923686385154724,
+        "phase_step_std_rad": 0.05418773368000984,
+        "phase_step_p95_abs_rad": 0.10330194979906082,
+        "unwrapped_phase_range_rad": 1.1106888055801392
+      },
+      "rx_5_6": {
+        "pair_type": "cross_card",
+        "phase_resultant_coherence": 0.00368279917165637,
+        "phase_step_std_rad": 1.8177138566970825,
+        "phase_step_p95_abs_rad": 2.9750423431396484,
+        "unwrapped_phase_range_rad": 63.523414611816406
+      },
+      "rx_6_7": {
+        "pair_type": "same_card",
+        "phase_resultant_coherence": 0.9810979962348938,
+        "phase_step_std_rad": 0.19461596012115479,
+        "phase_step_p95_abs_rad": 0.10284864157438278,
+        "unwrapped_phase_range_rad": 2.5642027854919434
+      }
+    }
+  }
+}

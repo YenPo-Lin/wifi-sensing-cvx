@@ -14,18 +14,19 @@ def signal_processing(raw_CSI, args):
 
     start_preprocessing = time.time()
     #CSI = pp.self_sanitize(raw_CSI) # = np.abs(raw_CSI) # remove NaN and Inf
-    CSI = np.abs(raw_CSI) # take absolute value to get power
-    background = pp.MA(CSI, args.fs * 1.0)
-    #CSI = np.mean(CSI, axis=1, keepdims=True) # average over Tx
+    CSI = np.abs(raw_CSI)**2 # take absolute value to get power
+    background = pp.MA(CSI, args.fs * 0.5)
 
     if args.preprocess == "ma":
-        #CSI = (CSI - background) # Original Version
-        CSI = (CSI - background) / (background + 1e-8) # Normalized dynamic residual
+        CSI = (CSI - background) # Original Version
+        #CSI = (CSI - background) / (background + 1e-8) # Normalized dynamic residual
     elif args.preprocess == "dwt":
         CSI = pp.DWT_components(CSI, target_labels= ["", "D5", "D4", "D3", "D2", ""])
     elif args.preprocess == "pca":
         CSI  -= background
         CSI = pp.PCA_time(CSI, args.fs *0.5, k=3)
+
+    #CSI = np.mean(CSI, axis=1, keepdims=True) # average over Tx
 
     # Re sampling
     # CSI = pp.sample_subcarriers(args, CSI, freq_space=args.freq_space)
@@ -39,7 +40,7 @@ def signal_processing(raw_CSI, args):
 
     tof_dop = MUSIC.ToF_Dop(args)
     azi_tof = MUSIC.Azi_ToF(args)
-    azi_dop = MUSIC.Azi_DopX(args)
+    azi_dop = MUSIC.Azi_Dop(args)
     azi_tof_dop = MUSIC.Azi_ToF_Dop(args)
 
     
@@ -51,13 +52,13 @@ def signal_processing(raw_CSI, args):
     #Doppler_spec.gen_spectrum(CSI, frame_idx)
     # Use all TX channels so this branch builds the same ToF-Doppler
     # covariance matrix as tof_dop.gen_spectrum(...) below.
-    Doppler_spec.gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="max", tx=None)
+    #Doppler_spec.gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="max", tx=None)
     #Doppler_spec.gen_spectrum_from_ToF_Doppler_Rx_diff(CSI, frame_idx, args, method="max")
     
-    #azi_tof_dop.gen_spectrum(CSI, frame_idx=1300, x_axis="azi", y_axis="tof", method="sum",z_range=None)
+    azi_tof_dop.gen_spectrum(CSI, frame_idx, method="sum")
     azi_tof.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="tof")
-    #tof_dop.gen_spectrum(CSI, frame_idx, x_axis="doppler", y_axis="tof")
-    #azi_dop.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="doppler")
+    tof_dop.gen_spectrum(CSI, frame_idx, x_axis="doppler", y_axis="tof")
+    azi_dop.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="doppler")
 
 
 

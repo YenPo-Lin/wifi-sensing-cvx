@@ -19,7 +19,7 @@ import pre_processing as pp
 OUTPUT_DIR = Path(__file__).resolve().parent / "simulation_outputs" / "micro_doppler_weighting"
 
 
-def simulation_args(num_frames, num_tx, num_rx, num_subcarriers):
+def simulation_args(num_frames, num_tx, num_rx, num_scarriers):
     return SimpleNamespace(
         fs=100,
         f_0=5.57e9,
@@ -27,164 +27,198 @@ def simulation_args(num_frames, num_tx, num_rx, num_subcarriers):
         delta_f=2.54e6,
         antenna_spacing=0.02,
         projection="cos",
-        num_frames=num_frames,
-        num_Tx=num_tx,
-        num_Rx=num_rx,
-        num_subcarriers=num_subcarriers,
-        avg_frames=32,
-        Sdim=2,
-        Sdim_energy_ratio=0.77,
-        tof_dop_Sdim=5,
-        tof_dop_Sdim_energy_ratio=None,
-        azi_tof_Sdim=2,
-        stream_win=5,
-        stream_sample_range=num_rx,
-        freq_win=24,
+        num_frames=100, # Time = num_frames / fs = 1s
+        num_Tx=1,
+        num_Rx=8,
+        num_scarriers=64, # 160 M // 63 = 2.54 MHz
+        avg_frames=100,
+        azi_tof_Sdim=3,
+        azi_tof_Sdim_ration=None,
+        tof_dop_Sdim=3,
+        tof_dop_Sdim_ration=None,
+        stream_win=5, # Azi
+        freq_win=24, # ToF
+        time_win=24, # Doppler
         freq_hop=2,
-        azi_tof_freq_win=24,
-        azi_tof_freq_hop=2,
-        freq_sample_range=num_subcarriers,
-        freq_space=1,
-        time_win=24,
         time_hop=2,
-        time_sample_range=30,
-        theta_min=30.0,
-        theta_max=150.0,
-        theta_step=3.0,
-        tau_min=2e-9,
-        tau_max=16e-9,
-        tau_step=3e-10,
-        doppler_min=-20.0,
-        doppler_max=20.0,
-        doppler_step=2.0,
-        roi_gate_half_width=2.0,
-        axis="ns",
-        axis_flip=True,
-        colorbar=True,
+        theta_min=30.0, theta_max=150.0, theta_step=3.0,
+        tau_min=2e-9, tau_max=16e-9, tau_step=3e-10,
+        doppler_min=-20.0, doppler_max=20.0, doppler_step=2.0,
+        roi_gate=2.0,
+
         pics_dir=None,
-        azi_tof_dop_snapshot_norm=True,
-        azi_tof_dop_epsilon=1e-8,
-        widfs_band_half_width=2.0,
-        widfs_weight_percentile=95.0,
-        q_ref=1.0,
-        cfar_training_cells=2,
-        cfar_guard_cells=1,
-        cfar_threshold_factor=1.05,
-        cfar_top_k=5,
-        cfar_min_peak_distance=1,
-        cfar_min_prominence_db=0.0,
-        # Robustness parameters
-        noise_level=0.5,
-        ch_gain_min=0.5,
-        ch_gain_max=1.5,
-        strong_amplitude=0.12,
-        weak_amplitude=0.06,
-        channel_envelope_floor=0.01,
-        # Keep each target visible across enough neighboring channels for the
-        # 5-Rx / 16-subcarrier Azi-ToF smoothing aperture.
-        rx_envelope_width=1.5,
-        sub_envelope_width=4.0,
     )
 
 
-def magnitude_target(args, theta_deg, tof_s, fd_hz, amplitude, envelope, time_s):
+def target_steering_csi(args, theta_deg, tof_s, fd_hz, amplitude=1.0, phase=0.0, tx_weights=None):
     """
-    Create a real magnitude modulation matching the configured scan grids.
-    # 將空間與時間相位加總後，取餘弦函數 np.cos(spatial_phase + temporal_phase)，而不是複數的指數函數
-    # 模擬動態目標反射波與靜態環境反射波疊加後，在接收端產生的「純實數能量漣漪（Magnitude Ripple）」
-    """
-    rx_idx = np.arange(args.num_Rx)[:, None]
-    sub_idx = np.arange(args.num_subcarriers)[None, :]
-    theta_rad = np.deg2rad(theta_deg)
+    Build one target's complex CSI from AoA, ToF, and Doppler steering vectors.
 
-    azi_phase = (2.0* np.pi* args.f_0* (1.0 - np.cos(theta_rad))* args.antenna_spacing/ 3e8* rx_idx)
-    tof_phase = -2.0 * np.pi * args.delta_f * sub_idx * tof_s
-    spatial_phase = azi_phase + tof_phase
-    temporal_phase = 2.0 * np.pi * fd_hz * time_s[:, None, None]
-    return amplitude * envelope[None, :, :] * np.cos(spatial_phase[None, :, :] + temporal_phase)
+    Output shape follows the rebuilt simulation convention:
+    (Tx, Rx, subcarrier, frame).
+    """
+    num_tx = int(args.num_Tx)
+    num_rx = int(args.num_Rx)
+    num_sc = int(args.num_scarriers)
+    num_frames = int(args.num_frames)
+
+    steering = MUSIC.SteeringVector(args)
+    a_azi = steering.steering_vector_AoA(theta_deg, stream_win=num_rx)
+    a_tof = steering.steering_vector_ToF(tof_s, freq_win=num_sc, freq_hop=1)
+    a_dop = steering.steering_vector_ToF_Dop(tof_s, fd_hz)
+    a_tof = np.exp(-2j * np.pi * steering.delta_f * sc_idx * tof_s)
+
+    time_s = np.arange(num_frames) / float(args.fs)
+    a_dop = np.exp(2j * np.pi * fd_hz * time_s)
+
+    if tx_weights is None:
+        tx_weights = np.ones(num_tx, dtype=np.complex128)
+    else:
+        tx_weights = np.asarray(tx_weights, dtype=np.complex128)
+        if tx_weights.shape != (num_tx,):
+            raise ValueError(
+                f"tx_weights must have shape ({num_tx},), got {tx_weights.shape}"
+            )
+
+    return (
+        complex(amplitude) * np.exp(1j * phase)
+        * tx_weights[:, None, None, None]
+        * a_azi[None, :, None, None]
+        * a_tof[None, None, :, None]
+        * a_dop[None, None, None, :]
+    )
+
+
+def generate_dynamic_csi(args, targets):
+    """
+    Sum steering-vector targets into a clean complex CSI tensor.
+
+    Each target is a dict with:
+    name, theta, tof, fd, amplitude, optional phase, optional tx_weights.
+    """
+    dynamic_csi = np.zeros(
+        (
+            int(args.num_Tx),
+            int(args.num_Rx),
+            int(args.num_scarriers),
+            int(args.num_frames),
+        ),
+        dtype=np.complex128,
+    )
+
+    for target in enumerate(targets):
+        target_csi = target_steering_csi(
+            args,
+            theta_deg=target["theta"],
+            tof_s=target["tof"],
+            fd_hz=target["fd"],
+            amplitude=target.get("amplitude", 1.0),
+            phase=target.get("phase", 0.0),
+            tx_weights=target.get("tx_weights"),
+        )
+        dynamic_csi += target_csi
+    return dynamic_csi
+
+
+def default_targets():
+    return [
+        {
+            "name": "strong",
+            "theta": 40.0,
+            "tof": 6e-9,
+            "fd": 16.0,
+            "amplitude": 0.12,
+        },
+        {
+            "name": "weak",
+            "theta": 75.0,
+            "tof": 12e-9,
+            "fd": 8.0,
+            "amplitude": 0.06,
+        },
+    ]
+
+
+def _static_csi_array(args, static_csi):
+    """Normalize static CSI to shape (Tx, Rx, subcarrier, frame)."""
+    shape_3d = (
+        int(args.num_Tx),
+        int(args.num_Rx),
+        int(args.num_scarriers),
+    )
+    shape_4d = shape_3d + (int(args.num_frames),)
+    static_csi = np.asarray(static_csi, dtype=np.complex128)
+
+    if static_csi.ndim == 0:
+        return np.full(shape_4d, static_csi.item(), dtype=np.complex128)
+    if static_csi.shape == shape_3d:
+        return np.broadcast_to(static_csi[..., None], shape_4d).copy()
+    if static_csi.shape == shape_4d:
+        return static_csi.copy()
+
+    raise ValueError(
+        "static_csi must be scalar, shape "
+        f"{shape_3d}, or shape {shape_4d}; got {static_csi.shape}"
+    )
+
+
+def simulate_magnitude_CSI(args, targets=None, static_csi=1.0):
+    """
+    Simulate clean magnitude CSI from static + dynamic complex paths.
+
+    Pipeline:
+    1. Build each dynamic target as a complex steering-vector CSI:
+       H_m(q,r,k,n) = alpha_m * a_azi(r) * a_tof(k) * a_dop(n).
+    2. Sum all dynamic targets.
+    3. Add a static reference path H_static(q,r,k,n).
+    4. Take magnitude: CSI_mag = |H_static + sum_m H_m|.
+
+    Output shape is (Tx, Rx, subcarrier, frame).
+    """
+    if targets is None:
+        targets = default_targets()
+
+    # Dynamic part keeps phase. Directly taking abs(dynamic) would remove
+    # AoA/ToF/Doppler; the magnitude ripple appears after adding static CSI.
+    dynamic_csi, target_components = generate_target_csi(args, targets)
+    static_component = _static_csi_array(args, static_csi)
+
+    complex_csi = static_component + dynamic_csi
+    magnitude_csi = np.abs(complex_csi)
+
+    components = {
+        "static": static_component,
+        "dynamic": dynamic_csi,
+        "complex": complex_csi,
+        **target_components,
+    }
+    return magnitude_csi, components
 
 
 def generate_magnitude_csi(args, seed=7):
-    """
-    # Generate magnitude-only CSI data.
-    # 模擬真實的室內干擾，在 generate_magnitude_csi 中對訊號進行了破壞。
-    # 在 Rx 軸與 Subcarrier 軸上乘上了 Gaussian Envelopes，例如 weak_rx_envelope 與 weak_sub_envelope）。
-    # 模擬頻率選擇性衰落與空間衰落。
-    # 疊加真實世界的雜訊
-    # (1) 非均勻通道增益 (Channel Gain)：給予每個 (Tx, Rx, Subcarrier) 獨立的靜態隨機增益（介於 0.8 到 1.2 之間）。
-    # (2) 慢速靜態雜訊 (Slow Clutter)：加入了一個 0.7Hz 的低頻波動來模擬呼吸或微弱的環境飄移。
-    # (3) 高斯白雜訊 (Gaussian Noise)：最後疊加隨機的標準常態分佈雜訊。
-    """
-    rng = np.random.default_rng(seed)
-    time_s = np.arange(args.num_frames) / args.fs
+    """Compatibility wrapper for the older frame-first analysis code."""
+    del seed
+    targets = default_targets()
+    magnitude_csi, components_tx_first = simulate_magnitude_CSI(args, targets)
+    target_by_name = {target["name"]: target for target in targets}
 
-    strong = {"theta": 40.0, "tof": 6e-9, "fd": 16.0, "amplitude": args.strong_amplitude}
-    weak = {"theta": 75.0, "tof": 12e-9, "fd": 8.0, "amplitude": args.weak_amplitude}
-
-    rx = np.arange(args.num_Rx)[:, None]
-    sub = np.arange(args.num_subcarriers)[None, :]
-    envelope_floor = float(args.channel_envelope_floor)
-    envelope_span = 1.0 - envelope_floor
-    strong_rx_envelope = envelope_floor + envelope_span * np.exp(
-        -0.5 * ((rx - 1.5) / args.rx_envelope_width) ** 2
-    )
-    strong_sub_envelope = envelope_floor + envelope_span * np.exp(
-        -0.5 * ((sub - 8.0) / args.sub_envelope_width) ** 2
-    )
-    strong_envelope = strong_rx_envelope * strong_sub_envelope
-
-    weak_rx_envelope = envelope_floor + envelope_span * np.exp(
-        -0.5 * ((rx - 5.5) / args.rx_envelope_width) ** 2
-    )
-    weak_sub_envelope = envelope_floor + envelope_span * np.exp(
-        -0.5 * ((sub - 23.0) / args.sub_envelope_width) ** 2
-    )
-    weak_envelope = weak_rx_envelope * weak_sub_envelope
-
-    strong_component = magnitude_target(
-        args,
-        theta_deg=strong["theta"],
-        tof_s=strong["tof"],
-        fd_hz=strong["fd"],
-        amplitude=strong["amplitude"],
-        envelope=strong_envelope,
-        time_s=time_s,
-    )
-    weak_component = magnitude_target(
-        args,
-        theta_deg=weak["theta"],
-        tof_s=weak["tof"],
-        fd_hz=weak["fd"],
-        amplitude=weak["amplitude"],
-        envelope=weak_envelope,
-        time_s=time_s,
-    )
-
-
-    channel_gain = rng.uniform(
-        args.ch_gain_min, args.ch_gain_max, size=(1, args.num_Tx, args.num_Rx, args.num_subcarriers)
-    )
-    baseline = 2.0 * channel_gain
-    slow_clutter = 0.035 * np.sin(2.0 * np.pi * 0.7 * time_s)[:, None, None]
-    noise = args.noise_level * rng.standard_normal(
-        (args.num_frames, args.num_Tx, args.num_Rx, args.num_subcarriers)
-    )
-
-    strong_only_modulation = strong_component + slow_clutter
-    weak_only_modulation = weak_component + slow_clutter
-    modulation = strong_component + weak_component + slow_clutter
-    strong_magnitude_csi = baseline * (1.0 + strong_only_modulation[:, None, :, :]) + noise
-    weak_magnitude_csi = baseline * (1.0 + weak_only_modulation[:, None, :, :]) + noise
-    magnitude_csi = baseline * (1.0 + modulation[:, None, :, :]) + noise
-    strong_magnitude_csi = np.maximum(strong_magnitude_csi, 1e-3)
-    weak_magnitude_csi = np.maximum(weak_magnitude_csi, 1e-3)
-    magnitude_csi = np.maximum(magnitude_csi, 1e-3)
-    components = {
-        "strong": strong_magnitude_csi,
-        "weak": weak_magnitude_csi,
-        "perfect": 1.0 + strong_component + weak_component,
+    static_component = components_tx_first["static"]
+    legacy_components = {
+        "strong": np.moveaxis(
+            np.abs(static_component + components_tx_first["strong"]), -1, 0
+        ),
+        "weak": np.moveaxis(
+            np.abs(static_component + components_tx_first["weak"]), -1, 0
+        ),
+        "perfect": np.moveaxis(magnitude_csi[0], -1, 0),
     }
-    return magnitude_csi, components, strong, weak
+
+    return (
+        np.moveaxis(magnitude_csi, -1, 0),
+        legacy_components,
+        target_by_name["strong"],
+        target_by_name["weak"],
+    )
 
 
 def normalize_magnitude(magnitude_csi, args):
@@ -796,7 +830,7 @@ def target_pipeline(
 
 def main():
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    args = simulation_args(num_frames=180, num_tx=1, num_rx=8, num_subcarriers=32)
+    args = simulation_args(num_frames=180, num_tx=1, num_rx=8, num_scarriers=32)
     frame_idx = 90
     magnitude_csi, component_csi, strong, weak = generate_magnitude_csi(args)
 
