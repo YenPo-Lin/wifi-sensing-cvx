@@ -30,7 +30,7 @@ def create_parser():
     parser.add_argument('--frame_idx', type=int, default=660)
     # MUSIC signal dimension
     parser.add_argument('--Sdim', type=int, default=3)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.33)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.66)
     parser.add_argument('--avg_frames', type=int, default=50)
     parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
@@ -43,7 +43,7 @@ def create_parser():
     parser.add_argument('--freq_space', type=int, default=1) # if freq resampling
 
 
-    parser.add_argument('--time_win', type=int, default=25)
+    parser.add_argument('--time_win', type=int, default=20)
     parser.add_argument('--time_hop', type=int, default=1)
     parser.add_argument('--time_sample_range', type=int, default=50) #100 frames
 
@@ -52,13 +52,13 @@ def create_parser():
     parser.add_argument('--theta_max', type=float, default= 180)
     parser.add_argument('--theta_step', type=int, default=3)
     # Time of Flight grid
-    parser.add_argument('--axis', type=str, default='m', choices=['ns', 'm'])
+    parser.add_argument('--axis', type=str, default='ns', choices=['ns', 'm'])
     parser.add_argument('--tau_min', type=float, default=2e-9)
-    parser.add_argument('--tau_max', type=float, default=20e-9)
+    parser.add_argument('--tau_max', type=float, default=18e-9)
     parser.add_argument('--tau_step', type=float, default=3e-10)
     # Doppler grid
-    parser.add_argument('--doppler_min', type=float, default=-20)
-    parser.add_argument('--doppler_max', type=float, default=20)
+    parser.add_argument('--doppler_min', type=float, default=-30)
+    parser.add_argument('--doppler_max', type=float, default=30)
     parser.add_argument('--doppler_step', type=float, default=1)
 
     # Doppler spectrogram settings
@@ -110,23 +110,17 @@ if __name__ == '__main__':
     parser = create_parser()
     args = parser.parse_args()
 
-    target_path = args.csi_file
-    if not os.path.isfile(target_path):
-        raise FileNotFoundError(f"❌ 找不到 CSI 檔案: {target_path}")
-    
-    # ---- Load CSI ----
-    print(f"📁 LOADING: {os.path.basename(target_path)}")
-    data = np.load(target_path)
-    CSI = data[data.files[0]]
+    if not os.path.isfile(args.csi_file):
+        raise FileNotFoundError(f"❌ 找不到 CSI 檔案: {args.csi_file}")
+    else:
+        # ---- Load CSI ----
+        print(f"📁 LOADING: {os.path.basename(args.csi_file)}")
+        data = np.load(args.csi_file)
+        CSI = data[data.files[0]]
 
-    # ---- Read CSI dimensions ----
-    args.num_frames = CSI.shape[0]
-    args.num_Tx = CSI.shape[1]
-    args.num_Rx = CSI.shape[2]
-    args.num_scarriers = CSI.shape[3]
-    #args.delta_f = args.BW / args.num_scarriers
-    
-    print(f"✅ CSI{CSI.shape} | Frames:{args.num_frames/args.fs:.2f}s | Fs:{args.fs}Hz")
+        # ---- Read CSI dimensions ----
+        args.num_frames, args.num_Tx, args.num_Rx, args.num_sc = CSI.shape
+        print(f"✅ CSI{CSI.shape} | Frames:{args.num_frames/args.fs:.2f}s | Fs:{args.fs}Hz")
 
     # ---- 開始信號處理 ----
     print("🥶 Start Signal Processing...")

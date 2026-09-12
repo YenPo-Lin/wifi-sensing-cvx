@@ -59,9 +59,3 @@ def signal_processing(raw_CSI, args):
     azi_tof.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="tof")
     tof_dop.gen_spectrum(CSI, frame_idx, x_axis="doppler", y_axis="tof")
     azi_dop.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="doppler")
-
-
-
-
-
-    
