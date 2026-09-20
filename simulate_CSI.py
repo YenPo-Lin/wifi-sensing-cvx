@@ -1,19 +1,16 @@
-"""Generate amplitude-only CSI for controlled multi-target experiments.
+"""Generate amplitude-only CSI for controlled fixed-target experiments.
 
-The public CSI layout is (frame, Tx, Rx, subcarrier). Each target follows one
-2-D bistatic Tx-target-Rx path. AoA, ToF, and Doppler are all derived from
-that path instead of being configured independently.
+The public CSI layout is ``(frame, Tx, Rx, subcarrier)``.  Each target has
+constant azimuth, ToF, and Doppler; only its activity envelope changes over
+time.
 """
 
-import numpy as np
 from pathlib import Path
+
 import matplotlib.pyplot as plt
+import numpy as np
+
 import MUSIC
-
-
-LIGHT_SPEED_MPS = 299_792_458.0
-DEFAULT_TX_POSITION_M = np.array([1.0, 0.0])
-DEFAULT_RX_POSITION_M = np.array([0.0, 0.0])
 
 
 def activity_envelope(args, target):
@@ -46,14 +43,8 @@ def activity_envelope(args, target):
 
 
 def target_trajectory(args, target):
-    """Derive a target's AoA, ToF, and Doppler from one physical path.
-
-    The configured theta/tof specify the initial position on the bistatic
-    ellipse for the Tx/Rx geometry. Radial velocity plus one sinusoidal
-    radial/tangential displacement produces the complete 2-D trajectory.
-    Doppler is the discrete carrier-phase slope implied by the resulting ToF.
-    """
-    missing = {"theta", "tof", "amplitude"} - target.keys()
+    """Return constant target parameters over all simulation frames."""
+    missing = {"theta", "tof", "fd", "amplitude"} - target.keys()
     if missing:
         raise ValueError(
             f"target {target.get('name', '<unnamed>')} is missing: "
@@ -62,94 +53,30 @@ def target_trajectory(args, target):
     if args.num_frames <= 0 or args.fs <= 0:
         raise ValueError("num_frames and fs must be positive")
 
-    theta_0_deg = float(target["theta"])
-    tof_0_s = float(target["tof"])
+    theta_deg = float(target["theta"])
+    tof_s = float(target["tof"])
+    fd_hz = float(target["fd"])
     amplitude = float(target["amplitude"])
-    if not 0.0 <= theta_0_deg <= 180.0:
+    if not np.all(np.isfinite([theta_deg, tof_s, fd_hz, amplitude])):
+        raise ValueError("target theta, tof, fd, and amplitude must be finite")
+    if not 0.0 <= theta_deg <= 180.0:
         raise ValueError("target theta must be in [0, 180] degrees")
-    if tof_0_s <= 0.0 or amplitude < 0.0:
+    if tof_s <= 0.0 or amplitude < 0.0:
         raise ValueError("target tof must be positive and amplitude nonnegative")
 
     time_s = np.arange(args.num_frames, dtype=float) / float(args.fs)
-    theta_0_rad = np.deg2rad(theta_0_deg)
-    radial_axis = np.array([np.cos(theta_0_rad), np.sin(theta_0_rad)])
-    tangential_axis = np.array([-np.sin(theta_0_rad), np.cos(theta_0_rad)])
-
-    frequency_hz = float(target.get("motion_frequency_hz", 0.0))
-    phase_rad = np.deg2rad(float(target.get("motion_phase_deg", 0.0)))
-    angle = 2.0 * np.pi * frequency_hz * time_s + phase_rad
-    # Subtract the initial value so theta/tof are exact at frame zero.
-    oscillation = np.sin(angle) - np.sin(phase_rad)
-
-    tx_position_m = np.asarray(
-        getattr(args, "tx_position_m", DEFAULT_TX_POSITION_M), dtype=float
-    )
-    rx_position_m = np.asarray(
-        getattr(args, "rx_position_m", DEFAULT_RX_POSITION_M), dtype=float
-    )
-    if tx_position_m.shape != (2,) or rx_position_m.shape != (2,):
-        raise ValueError("tx_position_m and rx_position_m must be 2-D points")
-
-    # Solve p0 = rx + radius_0*u from
-    # |p0-rx| + |p0-tx| = c*tof_0.
-    tx_from_rx = tx_position_m - rx_position_m
-    total_path_0_m = LIGHT_SPEED_MPS * tof_0_s
-    tx_rx_distance_m = float(np.linalg.norm(tx_from_rx))
-    denominator = 2.0 * (
-        total_path_0_m - float(np.dot(radial_axis, tx_from_rx))
-    )
-    if total_path_0_m <= tx_rx_distance_m or denominator <= 0.0:
-        raise ValueError("target tof is too short for the configured Tx/Rx geometry")
-    radius_0_m = (
-        total_path_0_m**2 - tx_rx_distance_m**2
-    ) / denominator
-
-    radial_distance_m = (
-        radius_0_m
-        + float(target.get("radial_velocity_mps", 0.0)) * time_s
-        + float(target.get("radial_motion_m", 0.0)) * oscillation
-    )
-    tangential_distance_m = (
-        float(target.get("tangential_motion_m", 0.0)) * oscillation
-    )
-    position_m = (
-        rx_position_m[None, :]
-        + radial_distance_m[:, None] * radial_axis[None, :]
-        + tangential_distance_m[:, None] * tangential_axis[None, :]
-    )
-
-    rx_to_target_m = position_m - rx_position_m[None, :]
-    rx_range_m = np.linalg.norm(rx_to_target_m, axis=1)
-    tx_range_m = np.linalg.norm(position_m - tx_position_m[None, :], axis=1)
-    if np.any(rx_range_m <= 0.0) or np.any(tx_range_m <= 0.0):
-        raise ValueError("target trajectory crosses the Tx or Rx position")
-
-    # arccos(x/r) matches the 0-to-180 degree ULA convention used by MUSIC.
-    theta_deg = np.rad2deg(
-        np.arccos(np.clip(rx_to_target_m[:, 0] / rx_range_m, -1.0, 1.0))
-    )
-    tof_s = (rx_range_m + tx_range_m) / LIGHT_SPEED_MPS
-
-    # H(t) contains exp(-j*2*pi*f0*tof(t)); its phase slope is Doppler.
-    carrier_phase = -2.0 * np.pi * float(args.f_0) * tof_s
-    fd_hz = np.zeros_like(time_s)
-    if args.num_frames > 1:
-        fd_hz[:-1] = np.diff(carrier_phase) * float(args.fs) / (2.0 * np.pi)
-        fd_hz[-1] = fd_hz[-2]
 
     return {
         "time_s": time_s,
-        "position_m": position_m,
-        "theta": theta_deg,
-        "tof": tof_s,
-        "fd": fd_hz,
+        "theta": np.full(args.num_frames, theta_deg, dtype=float),
+        "tof": np.full(args.num_frames, tof_s, dtype=float),
+        "fd": np.full(args.num_frames, fd_hz, dtype=float),
         "activity": activity_envelope(args, target),
     }
 
 
-
 def plot_target_trajectories(args, targets, frame_idx):
-    """Plot target trajectories versus frame and mark values at ``frame_idx``."""
+    """Plot fixed target parameters and activity versus frame."""
     if not 0 <= frame_idx < args.num_frames:
         raise ValueError(
             f"frame_idx must be in [0, {args.num_frames - 1}], got {frame_idx}"
@@ -206,7 +133,7 @@ def plot_target_trajectories(args, targets, frame_idx):
     axes[2].set_ylabel("Doppler (Hz)")
     axes[3].set_ylabel("Activity")
     axes[3].set_xlabel("Frame")
-    axes[0].set_title(f"Target ground-truth trajectories @ frame {frame_idx}")
+    axes[0].set_title(f"Fixed target ground truth @ frame {frame_idx}")
     for ax in axes:
         ax.axvline(frame_idx, color="black", linestyle="--", linewidth=1.0, alpha=0.6)
         ax.grid(True, alpha=0.3)
@@ -261,30 +188,29 @@ def target_gt_at_frame(args, targets, frame_idx):
 
 
 def trajectory_csi(args, target):
-    """Generate one target's latent complex CSI from its coupled trajectory."""
+    """Generate one fixed target's latent complex CSI component."""
     trajectory = target_trajectory(args, target)
     steering = MUSIC.SteeringVector(args)
-    a_azi = np.stack(
-        [
-            steering.steering_vector_AoA(theta, stream_win=args.num_Rx)
-            for theta in trajectory["theta"]
-        ]
+    a_azi = steering.steering_vector_AoA(
+        target["theta"],
+        stream_win=args.num_Rx,
     )
-    # The time-varying carrier phase inside ToF steering produces Doppler;
-    # there is no separately configured Doppler steering term.
-    a_tof = np.stack(
-        [
-            steering.steering_vector_ToF(tof, freq_win=args.num_sc, freq_hop=1)
-            for tof in trajectory["tof"]
-        ]
+    a_tof = steering.steering_vector_ToF(
+        target["tof"],
+        freq_win=args.num_sc,
+        freq_hop=1,
+    )
+    doppler_phase = np.exp(
+        1j * 2.0 * np.pi * float(target["fd"]) * trajectory["time_s"]
     )
 
     component = (
         float(target["amplitude"])
         * trajectory["activity"][:, None, None, None]
+        * doppler_phase[:, None, None, None]
         * np.exp(1j * float(target.get("initial_phase_rad", 0.0)))
-        * a_azi[:, None, :, None]
-        * a_tof[:, None, None, :]
+        * a_azi[None, None, :, None]
+        * a_tof[None, None, None, :]
     )
     return np.broadcast_to(
         component,
@@ -424,48 +350,43 @@ def simulate_csi(
     )
 
 
-def targets_csi_config(fix_motion=False):
-    """Return close-AoA/ToF strong and weak targets with distinct |fd|."""
-    targets = [
+def targets_csi_config():
+    """Return fixed close-AoA/ToF targets with distinct Doppler."""
+    return [
         {
             "name": "strong",
             "strength_label": "strong",
-            "theta": 72.0,
-            "tof": 11e-9,
+            "theta": 80.0,
+            "tof": 10e-9,
+            "fd": 3.0,
             "amplitude": 0.30,
-            "radial_velocity_mps": -0.12,
-            "radial_motion_m": 0.010,
-            "tangential_motion_m": 0.060,
-            "motion_frequency_hz": 0.50,
-            "motion_phase_deg": 0.0,
             "activity_start_s": 0.10,
             "activity_end_s": 0.60,
             "activity_ramp_s": 0.10,
         },
         {
-            "name": "weak",
-            "strength_label": "weak",
-            "theta": 84.0,
-            "tof": 14e-9,
+            "name": "weak1",
+            "strength_label": "weak1",
+            "theta": 100.0,
+            "tof": 12e-9,
+            "fd": +15.0,
             "amplitude": 0.10,
-            "radial_velocity_mps": -0.30,
-            "radial_motion_m": 0.008,
-            "tangential_motion_m": 0.070,
-            "motion_frequency_hz": 0.80,
-            "motion_phase_deg": 30.0,
             "activity_start_s": 0.20,
             "activity_end_s": 0.80,
             "activity_ramp_s": 0.10,
         },
+                {
+            "name": "weak1",
+            "strength_label": "weak2",
+            "theta": 60.0,
+            "tof": 8e-9,
+            "fd": -15.0,
+            "amplitude": 0.10,
+            "activity_start_s": 0.22,
+            "activity_end_s": 0.82,
+            "activity_ramp_s": 0.10,
+        },
     ]
-
-    if fix_motion:
-        for target in targets:
-            target["radial_velocity_mps"] = 0.0
-            target["radial_motion_m"] = 0.0
-            target["tangential_motion_m"] = 0.0
-            target["motion_frequency_hz"] = 0.0
-    return targets
 
 
 # Compatibility aliases for earlier simulation callers.

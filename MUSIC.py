@@ -3,6 +3,7 @@ import os
 from tqdm import tqdm
 import Plot
 import matplotlib.pyplot as plt
+from simulate_utils import cfar_2D
 
 def estimate_Sdim(Rxx, energy_ratio=0.88, min_dim=1, max_dim=None):
     arr = np.asarray(Rxx)
@@ -173,7 +174,11 @@ class Azi_ToF:
     def __init__(self, args):
         self.args = args
         self.steering_vector = SteeringVector(args)
-        self.Sdim = getattr(args, "Sdim", None)
+        self.Sdim = getattr(
+            args,
+            "Azi_ToF_Sdim",
+            getattr(args, "Sdim", None),
+        )
         self.last_Sdim = None
 
         # Steering/smoothing aperture.
@@ -356,21 +361,33 @@ class Azi_ToF:
 
         return self.tau_grid, self.theta_grid, PP
 
-    def gen_spectrum(self,CSI,frame_idx,x_axis="azi",y_axis="tof"):
+    def gen_spectrum(
+        self,
+        CSI,
+        frame_idx,
+        x_axis="azi",
+        y_axis="tof",
+        title="Azimuth-ToF",
+        plot_frame_idx=None,
+        file_name=None,
+    ):
         Rxx = self.Rxx_smooth(CSI, frame_idx)
         tau_grid, theta_grid, P_azi_tof = self.cal_spectrum(Rxx)
         P_azi_tof_db = 10.0 * np.log10(np.maximum(P_azi_tof, 1e-12))
+        if plot_frame_idx is None:
+            plot_frame_idx = frame_idx
         Plot.plot_spectrum(
-            frame_idx,
+            plot_frame_idx,
             theta_grid,
             tau_grid,
             P_azi_tof_db,
             self.args,
-            title="Azimuth-ToF",
+            title=title,
             x_axis=x_axis,
             y_axis=y_axis,
             sdim=self.last_Sdim,
             spectrum_axes=("azi", "tof"),
+            file_name=file_name,
         )
 
         return tau_grid, theta_grid, P_azi_tof_db
@@ -380,7 +397,18 @@ class ToF_Dop:
     def __init__(self, args):
         self.args = args
         self.steering_vector = SteeringVector(args)
-        self.Sdim = getattr(args, "Sdim", None)
+        self.Sdim = getattr(
+            args,
+            "ToF_Dop_Sdim",
+            getattr(args, "Sdim", None),
+        )
+        # For 2D CFAR
+        self.training_cells = args.cfar_training_cells
+        self.guard_cells = args.cfar_guard_cells
+        self.threshold_factor = args.cfar_threshold_factor
+        self.top_k = args.cfar_top_k
+        self.min_peak_distance = args.cfar_min_peak_distance
+
 
         # Steering/smoothing aperture.
         self.freq_win = int(args.freq_win)
@@ -539,11 +567,44 @@ class ToF_Dop:
             spectrum_axes=("tof", "doppler"),
         )
 
+    def gen_spectrum_return_target(self, CSI, frame_idx, x_axis="doppler", y_axis="tof"):
+        Rxx = self.Rxx_smooth(CSI, frame_idx)
+        tau_grid, fd_grid, P_tof_dop = self.cal_spectrum(Rxx)
+        P_tof_dop_db = 10.0 * np.log10(np.maximum(P_tof_dop, 1e-12))
+        Plot.plot_spectrum(
+            frame_idx,
+            tau_grid,
+            fd_grid,
+            P_tof_dop_db,
+            self.args,
+            title="ToF-Doppler",
+            x_axis=x_axis,
+            y_axis=y_axis,
+            sdim=self.Sdim,
+            spectrum_axes=("tof", "doppler"),
+        )
+        detected_targets= cfar_2D(
+            P_tof_dop,
+            tau_grid,
+            fd_grid,
+            training_cells=self.training_cells,
+            guard_cells=self.guard_cells,
+            threshold_factor=self.threshold_factor,
+            top_k=self.top_k,
+            min_peak_distance=self.min_peak_distance,
+        )
+        return detected_targets
+
+
 class Azi_Dop:
     def __init__(self, args):
         self.args = args
         self.steering_vector = SteeringVector(args)
-        self.Sdim = getattr(args, "Sdim", None)
+        self.Sdim = getattr(
+            args,
+            "Azi_Dop_Sdim",
+            getattr(args, "Sdim", None),
+        )
         self.last_Sdim = None
         self.last_meta = None
 
@@ -696,11 +757,16 @@ class Azi_ToF_Dop:
     def __init__(self, args):
         self.args = args
         self.steering_vector = SteeringVector(args)
-        self.Sdim = getattr(args, "Sdim", None)
+        self.Sdim = getattr(
+            args,
+            "Azi_ToF_Dop_Sdim",
+            getattr(args, "Sdim", None),
+        )
         self.last_Sdim = None
         self.last_meta = None
         self.last_cube = None
         self.last_axes = None
+        self.last_frame_idx = None
 
         self.stream_win = int(args.stream_win)
         self.stream_sample_range = int(min(args.stream_sample_range, args.num_Rx))
@@ -917,22 +983,8 @@ class Azi_ToF_Dop:
     def gen_spectrum(self, CSI, frame_idx, method="sum"):
         Rxx = self.Rxx_smooth(CSI, frame_idx)
         theta, tau, fd, P_music_db = self.cal_spectrum(Rxx)
-        '''
-        Plot.plot_3D_stack_spectrum(
-            frame_idx,
-            theta,
-            tau,
-            fd,
-            P_music_db,
-            self.args,
-            title="3D Azi-ToF-Doppler Stack",
-            x_axis="azi",
-            y_axis="tof",
-            z_axis="doppler",
-            sdim=self.last_Sdim,
-            spectrum_axes=("azi", "tof", "doppler"),
-        )
-        '''
+        self.last_frame_idx = int(frame_idx)
+        Plot.plot_3D_cube(frame_idx, theta, tau, fd, P_music_db, self.args, title="cube", sdim=self.last_Sdim)
         # Projection must be performed in linear power, not in dB.
         P_music = 10.0 ** (P_music_db / 10.0)
         azi_tof_db = 10.0 * np.log10(self._combine_axis(P_music, axis=2, method=method, axis_values=fd)+ 1e-12)
@@ -1009,10 +1061,116 @@ class Azi_ToF_Dop:
             os.makedirs(self.args.pics_dir, exist_ok=True)
             save_path = os.path.join(
                 self.args.pics_dir,
-                f"{frame_idx:04d}_azi_tof_dop_{method}.png",
+                f"{frame_idx:04d}_3D_MUSIC_{method}.png",
             )
             fig.savefig(save_path, dpi=100)
             plt.close(fig)
             print(f"Saved: {save_path}")
+
+        return results
+
+    def gen_sub_specturm(
+        self,
+        CSI,
+        frame_idx,
+        targets,
+        fd_band=2.0,
+        method="sum",
+    ):
+        """Plot one Azi-ToF projection for each target Doppler band."""
+        targets = list(targets)
+        if not targets:
+            print("No targets available for Azi-ToF Doppler-band projection.")
+            return []
+
+        fd_band = float(fd_band)
+        if fd_band < 0.0:
+            raise ValueError(f"fd_band must be non-negative, got {fd_band}")
+
+        if (
+            self.last_cube is not None
+            and self.last_axes is not None
+            and self.last_frame_idx == int(frame_idx)
+        ):
+            theta = self.last_axes["azi"]
+            tau = self.last_axes["tof"]
+            fd_grid = self.last_axes["doppler"]
+            P_music_db = self.last_cube
+            print(f"Reuse Azi-ToF-Doppler cube at frame {frame_idx}.")
+        else:
+            Rxx = self.Rxx_smooth(CSI, frame_idx)
+            if Rxx is None:
+                return []
+            theta, tau, fd_grid, P_music_db = self.cal_spectrum(Rxx)
+            self.last_frame_idx = int(frame_idx)
+
+        # Doppler-band projection must be summed in linear power, not in dB.
+        P_music = 10.0 ** (P_music_db / 10.0)
+        results = []
+        for target_idx, target in enumerate(targets, start=1):
+            if "fd" not in target:
+                raise KeyError("Each target must contain an 'fd' value.")
+
+            target_fd = float(target["fd"])
+            fd_mask = np.abs(fd_grid - target_fd) <= fd_band + 1e-12
+            if not np.any(fd_mask):
+                print(
+                    f"Skip target fd={target_fd:+.2f} Hz: "
+                    f"no Doppler bins within ±{fd_band:.2f} Hz."
+                )
+                continue
+
+            selected_fd = fd_grid[fd_mask]
+            band_power = P_music[:, :, fd_mask]
+            azi_tof = self._combine_axis(
+                band_power,
+                axis=2,
+                method=method,
+                axis_values=selected_fd,
+            )
+            azi_tof_db = 10.0 * np.log10(np.maximum(azi_tof, 1e-12))
+
+            rank = int(target.get("rank", target_idx))
+            fd_sign = "p" if target_fd >= 0.0 else "m"
+            fd_token = f"{abs(target_fd):.2f}".replace(".", "p")
+            file_name = (
+                f"{frame_idx}_target_{rank:02d}_fd_"
+                f"{fd_sign}{fd_token}Hz.png"
+            )
+            title = (
+                f"Azi-ToF target #{rank}: "
+                f"fd={target_fd:+.2f}±{fd_band:.2f} Hz ({method})"
+            )
+            Plot.plot_spectrum(
+                frame_idx,
+                theta,
+                tau,
+                azi_tof_db,
+                self.args,
+                title=title,
+                x_axis="azi",
+                y_axis="tof",
+                sdim=self.last_Sdim,
+                spectrum_axes=("azi", "tof"),
+                file_name=file_name,
+            )
+
+            result = {
+                "target": target,
+                "target_fd": target_fd,
+                "fd_band": fd_band,
+                "selected_fd": selected_fd,
+                "theta": theta,
+                "tau": tau,
+                "spectrum_db": azi_tof_db,
+                "method": method,
+                "file_name": file_name,
+            }
+            results.append(result)
+            print(
+                f"Azi-ToF target #{rank}: fd={target_fd:+.2f} Hz, "
+                f"band=[{selected_fd[0]:+.2f}, {selected_fd[-1]:+.2f}] Hz, "
+                f"bins={selected_fd.size}, method={method}"
+            )
 
         return results

@@ -1,20 +1,8 @@
 import os
-import scipy.io as sio
 import numpy as np
 import matplotlib.pyplot as plt
 from matplotlib import colors as mcolors
-
-
-def _percentile_limits(x, low=1.0, high=99.0):
-    x = np.asarray(x)
-    finite = x[np.isfinite(x)]
-    if finite.size == 0:
-        return None, None
-
-    vmin, vmax = np.percentile(finite, [low, high])
-    if vmin == vmax:
-        vmax = vmin + 1e-12
-    return float(vmin), float(vmax)
+from matplotlib.ticker import MaxNLocator
 
 
 def _tof_axis_values_and_label(tau, args):
@@ -22,27 +10,7 @@ def _tof_axis_values_and_label(tau, args):
         return tau * 3e8 / 2.0, "distance (m)"
     return tau * 1e9, "ToF (ns)"
 
-
-def _normalize_axis_name(axis_name):
-    aliases = {
-        "aoa": "azi",
-        "azimuth": "azi",
-        "theta": "azi",
-        "azi": "azi",
-        "tof": "tof",
-        "tau": "tof",
-        "distance": "tof",
-        "doppler": "doppler",
-        "fd": "doppler",
-    }
-    normalized = aliases.get(str(axis_name).lower())
-    if normalized is None:
-        raise ValueError(f"Unsupported axis name: {axis_name}")
-    return normalized
-
-
 def _axis_values_and_label(axis_name, values, args):
-    axis_name = _normalize_axis_name(axis_name)
     if axis_name == "tof":
         return _tof_axis_values_and_label(values, args)
     if axis_name == "azi":
@@ -50,56 +18,6 @@ def _axis_values_and_label(axis_name, values, args):
     if axis_name == "doppler":
         return values, "Doppler frequency (Hz)"
     raise ValueError(f"Unsupported axis name: {axis_name}")
-
-
-def plot_heatmap(
-    frame_idx,
-    x_values,
-    y_values,
-    heatmap,
-    args,
-    title="",
-    cmap="jet",
-    x_axis="",
-    y_axis="",
-    file_suffix=None,
-    sdim=None,
-):
-    x_values, x_label = _axis_values_and_label(x_axis, np.asarray(x_values), args)
-    y_values, y_label = _axis_values_and_label(y_axis, np.asarray(y_values), args)
-    heatmap = np.asarray(heatmap)
-    expected_shape = (len(y_values), len(x_values))
-    if heatmap.shape != expected_shape:
-        raise ValueError(
-            f"Expected heatmap shape {expected_shape}, but got {heatmap.shape}"
-        )
-
-    plt.figure()
-    plt.pcolormesh(x_values, y_values, heatmap, cmap=cmap, shading="auto")
-    if args.colorbar:
-        plt.colorbar()
-
-    plt.gca().set_xticks(x_values, minor=True)
-    plt.gca().set_yticks(y_values, minor=True)
-    plt.grid(which="minor", color="w", linestyle="-", linewidth=0.5, alpha=0.1)
-    plt.xlabel(x_label)
-    plt.ylabel(y_label)
-    full_title = title + " @ frame " + str(frame_idx)
-    if sdim is not None:
-        full_title += " Sdim " + str(int(sdim))
-    plt.title(full_title, fontsize=8)
-
-    save_dir = args.pics_dir
-    if save_dir is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        filename = f"{frame_idx:04d}.png"
-        if file_suffix:
-            filename = f"{frame_idx:04d}_{file_suffix}.png"
-        save_path = os.path.join(save_dir, filename)
-        plt.savefig(save_path, dpi=100)
-        plt.close()
-        print(f"Saved: {save_path}")
-
 
 def _plot_target_gt(ax, target_gt, x_axis, y_axis, args):
     """Plot ``[azimuth, ToF, Doppler]`` ground-truth rows on selected axes."""
@@ -134,183 +52,167 @@ def _plot_target_gt(ax, target_gt, x_axis, y_axis, args):
         zorder=3,
     )
 
-def plot_3D_stack_spectrum(
+def plot_3D_cube(
     frame_idx,
-    axis0_values,
-    axis1_values,
-    axis2_values,
+    azi_values,
+    tof_values,
+    doppler_values,
     P_music,
     args,
-    title="",
-    x_axis=None,
-    y_axis=None,
-    z_axis=None,
+    title="cube",
     sdim=None,
-    spectrum_axes=None,
     ax=None,
     save=True,
     show_colorbar=None,
-    alpha=0.02,
 ):
-    """Plot a 3D MUSIC cube as translucent heatmap slices along ``z_axis``.
+    """Render an ``(azimuth, ToF, Doppler)`` MUSIC cube as a point cloud."""
+    azi_values = np.asarray(azi_values, dtype=float)
+    tof_values = np.asarray(tof_values, dtype=float)
+    doppler_values = np.asarray(doppler_values, dtype=float)
+    cube = np.asarray(P_music, dtype=float)
 
-    ``P_music`` follows ``spectrum_axes`` order. The displayed x/y/z axes may
-    be any permutation of those three axes. Every z-axis bin is rendered as
-    one layer, so the layer count follows doppler_min/max/step when Doppler is
-    selected as the z axis.
-    """
-    if spectrum_axes is None or len(spectrum_axes) != 3:
-        raise ValueError(
-            "spectrum_axes=(axis0, axis1, axis2) is required for 3D plotting."
-        )
-
-    spectrum_axes = tuple(map(_normalize_axis_name, spectrum_axes))
-    if len(set(spectrum_axes)) != 3:
-        raise ValueError("spectrum_axes must contain three distinct axes.")
-
-    x_axis = _normalize_axis_name(x_axis or spectrum_axes[0])
-    y_axis = _normalize_axis_name(y_axis or spectrum_axes[1])
-    z_axis = _normalize_axis_name(z_axis or spectrum_axes[2])
-    display_axes = (x_axis, y_axis, z_axis)
-    if set(display_axes) != set(spectrum_axes):
-        raise ValueError("x_axis/y_axis/z_axis must match spectrum_axes.")
-
-    axis_values = tuple(
-        np.asarray(values, dtype=float)
-        for values in (axis0_values, axis1_values, axis2_values)
-    )
-    P_music = np.asarray(P_music, dtype=float)
-    expected_shape = tuple(len(values) for values in axis_values)
-    if P_music.shape != expected_shape:
-        raise ValueError(
-            f"Expected 3D spectrum shape {expected_shape}, got {P_music.shape}."
-        )
+    axis_values = (azi_values, tof_values, doppler_values)
     if any(values.ndim != 1 or values.size == 0 for values in axis_values):
-        raise ValueError("All three spectrum axes must be non-empty 1D arrays.")
+        raise ValueError("Azimuth, ToF, and Doppler must be non-empty 1D arrays.")
 
-    values_by_axis = dict(zip(spectrum_axes, axis_values))
-    x_values, x_label = _axis_values_and_label(
-        x_axis, values_by_axis[x_axis], args
+    expected_shape = (
+        len(azi_values),
+        len(tof_values),
+        len(doppler_values),
     )
-    y_values, y_label = _axis_values_and_label(
-        y_axis, values_by_axis[y_axis], args
-    )
-    z_values, z_label = _axis_values_and_label(
-        z_axis, values_by_axis[z_axis], args
-    )
+    if cube.shape != expected_shape:
+        raise ValueError(
+            f"Expected MUSIC cube shape {expected_shape}, got {cube.shape}."
+        )
 
-    # Reorder the cube to a simple (x, y, z) layout for surface rendering.
-    permutation = tuple(spectrum_axes.index(axis_name) for axis_name in display_axes)
-    cube_xyz = np.transpose(P_music, permutation)
-    finite = cube_xyz[np.isfinite(cube_xyz)]
+    finite_mask = np.isfinite(cube)
+    finite = cube[finite_mask]
     if finite.size == 0:
         raise ValueError("P_music contains no finite values.")
-    vmin, vmax = np.percentile(finite, [1.0, 99.0])
+
+    # Keep the high-energy structure visible instead of filling the entire
+    # cube with opaque low-power samples. The complete cube still determines
+    # the threshold and color scale.
+    peak = float(np.max(finite))
+    dynamic_range_db = max(
+        0.0,
+        float(getattr(args, "cube_dynamic_range_db", 20.0)),
+    )
+    percentile = float(
+        np.clip(getattr(args, "cube_percentile", 82.0), 0.0, 100.0)
+    )
+    power_floor = max(
+        peak - dynamic_range_db,
+        float(np.percentile(finite, percentile)),
+    )
+    visible = finite_mask & (cube >= power_floor)
+    azi_idx, tof_idx, doppler_idx = np.nonzero(visible)
+    point_power = cube[visible]
+
+    max_points = max(1, int(getattr(args, "cube_max_points", 60000)))
+    if point_power.size > max_points:
+        keep = np.argpartition(point_power, -max_points)[-max_points:]
+        azi_idx = azi_idx[keep]
+        tof_idx = tof_idx[keep]
+        doppler_idx = doppler_idx[keep]
+        point_power = point_power[keep]
+
+    tof_plot, tof_label = _tof_axis_values_and_label(tof_values, args)
+    vmin = float(np.min(point_power))
+    vmax = peak
     if vmin == vmax:
-        vmax = vmin + 1e-12
-
-    alpha = float(alpha)
-    if not 0.0 <= alpha <= 1.0:
-        raise ValueError("alpha must be between 0 and 1.")
+        vmin = vmax - 1e-12
     cmap = plt.get_cmap("jet")
-    norm = mcolors.Normalize(vmin=float(vmin), vmax=float(vmax), clip=True)
-
-    # Every Doppler/z bin is one surface layer. Only the in-plane x/y grid may
-    # be downsampled for rendering speed; no z-axis feature is discarded.
-    slice_indices = np.arange(len(z_values), dtype=int)
-
-    max_axis_points = max(2, int(getattr(args, "stack_axis_max_points", 80)))
-    x_indices = np.unique(
-        np.linspace(0, len(x_values) - 1, min(max_axis_points, len(x_values))).round().astype(int)
+    norm = mcolors.Normalize(vmin=vmin, vmax=vmax, clip=True)
+    normalized_power = norm(point_power)
+    point_colors = cmap(normalized_power)
+    point_alpha_min = float(
+        np.clip(getattr(args, "cube_point_alpha_min", 0.12), 0.0, 1.0)
     )
-    y_indices = np.unique(
-        np.linspace(0, len(y_values) - 1, min(max_axis_points, len(y_values))).round().astype(int)
+    point_alpha_max = float(
+        np.clip(
+            getattr(args, "cube_point_alpha_max", 0.95),
+            point_alpha_min,
+            1.0,
+        )
     )
-    x_plot = x_values[x_indices]
-    y_plot = y_values[y_indices]
-    X, Y = np.meshgrid(x_plot, y_plot, indexing="ij")
+    point_alpha_gamma = max(
+        1e-6,
+        float(getattr(args, "cube_point_alpha_gamma", 1.8)),
+    )
+    point_colors[:, 3] = point_alpha_min + (
+        point_alpha_max - point_alpha_min
+    ) * normalized_power ** point_alpha_gamma
 
     if ax is None:
-        fig = plt.figure(figsize=(8, 7))
+        fig = plt.figure(figsize=(8.4, 7.2))
         ax = fig.add_subplot(111, projection="3d")
-    elif not hasattr(ax, "plot_surface"):
+    elif not hasattr(ax, "scatter") or not hasattr(ax, "set_zlabel"):
         raise ValueError("ax must be a Matplotlib 3D axes.")
 
-    for slice_idx in slice_indices:
-        plane = cube_xyz[np.ix_(x_indices, y_indices, [slice_idx])][..., 0]
-        normalized = norm(plane)
-        facecolors = cmap(normalized)
-        # Every Doppler layer uses the same fixed opacity supplied by ``alpha``.
-        facecolors[..., 3] = alpha
-        Z = np.full_like(X, z_values[slice_idx], dtype=float)
-        ax.plot_surface(
-            X,
-            Y,
-            Z,
-            facecolors=facecolors,
-            rstride=1,
-            cstride=1,
-            linewidth=0,
-            antialiased=False,
-            shade=False,
-        )
+    ax.scatter(
+        azi_values[azi_idx],
+        tof_plot[tof_idx],
+        doppler_values[doppler_idx],
+        c=point_colors,
+        marker="s",
+        s=max(0.1, float(getattr(args, "cube_point_size", 3.0))),
+        linewidths=0,
+        depthshade=False,
+    )
 
-    target_gt = getattr(args, "target_gt", None)
-    if target_gt is not None:
-        target_gt = np.asarray(target_gt, dtype=float)
-        if target_gt.size:
-            target_gt = np.atleast_2d(target_gt)
-            if target_gt.shape[1] != 3:
-                raise ValueError(
-                    "target_gt must have rows [azimuth_deg, tof_s, doppler_hz]."
-                )
-            gt_by_axis = {
-                "azi": target_gt[:, 0],
-                "tof": target_gt[:, 1],
-                "doppler": target_gt[:, 2],
-            }
-            x_gt, _ = _axis_values_and_label(x_axis, gt_by_axis[x_axis], args)
-            y_gt, _ = _axis_values_and_label(y_axis, gt_by_axis[y_axis], args)
-            z_gt, _ = _axis_values_and_label(z_axis, gt_by_axis[z_axis], args)
-            ax.scatter(
-                x_gt,
-                y_gt,
-                z_gt,
-                marker="x",
-                s=55,
-                color="white",
-                linewidths=1.8,
-                depthshade=False,
-            )
+    ax.set_xlabel("Azimuth (deg)", labelpad=8)
+    ax.set_ylabel(tof_label, labelpad=8)
+    ax.set_zlabel("Doppler (Hz)", labelpad=2)
+    ax.set_xlim(float(np.min(azi_values)), float(np.max(azi_values)))
+    ax.set_ylim(float(np.min(tof_plot)), float(np.max(tof_plot)))
+    ax.set_zlim(float(np.min(doppler_values)), float(np.max(doppler_values)))
+    # View the cube from the opposite side so the Doppler axis is on the left.
+    ax.view_init(elev=24, azim=-125)
+    ax.set_box_aspect((1.20, 1.05, 1.15))
 
-    ax.set_xlabel(x_label, labelpad=8)
-    ax.set_ylabel(y_label, labelpad=8)
-    ax.set_zlabel(z_label, labelpad=8)
-    ax.set_xlim(float(x_values[0]), float(x_values[-1]))
-    ax.set_ylim(float(y_values[0]), float(y_values[-1]))
-    ax.set_zlim(float(z_values[0]), float(z_values[-1]))
-    ax.view_init(elev=25, azim=-55)
-    ax.set_box_aspect((1.15, 1.15, 1.4))
+    # Fine, unobtrusive cube grid similar to the reference visualization.
+    for axis in (ax.xaxis, ax.yaxis, ax.zaxis):
+        axis.set_major_locator(MaxNLocator(nbins=8))
+        axis.line.set_color("black")
+        axis.line.set_linewidth(1.0)
+        axis._axinfo["grid"]["linewidth"] = 0.35
+        axis._axinfo["grid"]["linestyle"] = "-"
+        axis._axinfo["grid"]["color"] = (0.10, 0.10, 0.10, 0.22)
+        axis.pane.set_facecolor((1.0, 1.0, 1.0, 0.0))
+        axis.pane.set_edgecolor((0.10, 0.10, 0.10, 0.22))
+        axis.pane.set_linewidth(0.35)
+    ax.tick_params(labelsize=8, width=0.5, pad=1)
 
-    full_title = (title or "3D stacked MUSIC spectrum") + f" @ frame {frame_idx}"
+    full_title = title + f" @ frame {frame_idx}"
     if sdim is not None:
         full_title += f" Sdim {int(sdim)}"
-    ax.set_title(full_title, fontsize=9, pad=16)
+    ax.set_title(full_title, fontsize=9, pad=14)
 
     if show_colorbar is None:
         show_colorbar = bool(args.colorbar)
     if show_colorbar:
         scalar_map = plt.cm.ScalarMappable(norm=norm, cmap=cmap)
-        scalar_map.set_array(finite)
-        colorbar = ax.figure.colorbar(scalar_map, ax=ax, pad=0.10, shrink=0.72)
+        scalar_map.set_array(point_power)
+        colorbar = ax.figure.colorbar(
+            scalar_map,
+            ax=ax,
+            pad=0.10,
+            shrink=0.72,
+        )
         colorbar.outline.set_visible(False)
         colorbar.set_label("Power (dB)", rotation=270, labelpad=15)
 
     if save and args.pics_dir is not None:
-        os.makedirs(args.pics_dir, exist_ok=True)
-        save_title = title or "3D stacked MUSIC spectrum"
-        save_path = os.path.join(args.pics_dir, f"{save_title} {frame_idx:04d}.png")
-        ax.figure.savefig(save_path, dpi=120, bbox_inches="tight")
+        save_dir = os.path.join(args.pics_dir, "Azi_ToF_Doppler")
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, f"{frame_idx}.png")
+        ax.figure.savefig(
+            save_path,
+            dpi=160,
+            bbox_inches="tight",
+            pad_inches=0.20,
+        )
         plt.close(ax.figure)
         print(f"Saved: {save_path}")
 
@@ -331,13 +233,12 @@ def plot_spectrum(
     save=True,
     show_colorbar=None,
     target_gt=None,
+    file_name=None,
 ):
     if spectrum_axes is None or len(spectrum_axes) != 2:
         raise ValueError("spectrum_axes=(axis0, axis1) is required.")
 
-    axis0, axis1 = map(_normalize_axis_name, spectrum_axes)
-    x_axis = _normalize_axis_name(x_axis or axis1)
-    y_axis = _normalize_axis_name(y_axis or axis0)
+    axis0, axis1 = spectrum_axes
     if {x_axis, y_axis} != {axis0, axis1}:
         raise ValueError("x_axis/y_axis must match spectrum_axes.")
 
@@ -391,12 +292,20 @@ def plot_spectrum(
     ax.set_title(full_title, fontsize=8)
 
     # --- save figures ---
-    save_dir = args.pics_dir
-    if save and save_dir is not None:
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(
-            save_dir, f"{title} {frame_idx:04d}.png"
+    if save and args.pics_dir is not None:
+        output_folder_by_axes = {
+            frozenset(("azi", "tof")): "Azi_ToF",
+            frozenset(("azi", "doppler")): "Azi_Doppler",
+            frozenset(("tof", "doppler")): "ToF_Doppler",
+        }
+        save_dir = os.path.join(
+            args.pics_dir,
+            output_folder_by_axes[frozenset(spectrum_axes)],
         )
+        os.makedirs(save_dir, exist_ok=True)
+        if file_name is None:
+            file_name = f"{frame_idx}.png"
+        save_path = os.path.join(save_dir, file_name)
         ax.figure.savefig(save_path, dpi=100)
         plt.close(ax.figure)
         print(f"Saved: {save_path}")

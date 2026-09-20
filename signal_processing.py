@@ -1,11 +1,8 @@
 import numpy as np
 import pre_processing as pp
 import MUSIC
-import Plot
-import os
 import time
-import Doppler_spec
-import WIDFS
+from simulate_utils import projected_Azi_ToF
 
 
 
@@ -14,7 +11,7 @@ def signal_processing(raw_CSI, args):
 
     start_preprocessing = time.time()
     #CSI = pp.self_sanitize(raw_CSI) # = np.abs(raw_CSI) # remove NaN and Inf
-    CSI = np.abs(raw_CSI)**2 # take absolute value to get power
+    CSI = np.abs(raw_CSI)# take absolute value to get power
     background = pp.MA(CSI, args.fs * 0.5)
 
     if args.preprocess == "ma":
@@ -57,5 +54,31 @@ def signal_processing(raw_CSI, args):
     
     azi_tof_dop.gen_spectrum(CSI, frame_idx, method="sum")
     azi_tof.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="tof")
-    tof_dop.gen_spectrum(CSI, frame_idx, x_axis="doppler", y_axis="tof")
+    targets = tof_dop.gen_spectrum_return_target(CSI, frame_idx, x_axis="doppler", y_axis="tof")
+
+    for target in targets:
+        print(
+            f"  #{target['rank']}: tau={target['tau'] * 1e9:.2f} ns, "
+            f"fd={target['fd']:+.2f} Hz, "
+            f"power={target['power_db']:.2f} dB, "
+        )
+
+    target_fds = [target["fd"] for target in targets]
+    projected_results = projected_Azi_ToF(
+        CSI,
+        args,
+        target_fds,
+        window="rect",
+        normalize=False,
+    )
+    for target, projected_result in zip(targets, projected_results):
+        target["projected_azi_tof"] = projected_result
+
+    azi_tof_dop.gen_sub_specturm(
+        CSI,
+        frame_idx,
+        targets,
+        fd_band=args.fd_band,
+        method="sum",
+    )
     azi_dop.gen_spectrum(CSI, frame_idx, x_axis="azi", y_axis="doppler")

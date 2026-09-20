@@ -1,6 +1,179 @@
 """Utilities shared by the controlled CSI simulations."""
 
 import numpy as np
+import MUSIC
+
+
+def doppler_projection(CSI, target_fd, args, window="hann", normalize=False):
+    """Project every dynamic-power CSI channel onto one signed Doppler.
+
+    This implements
+
+        Z(fd) = sum_n h[n] * CSI[n] * exp(-j * 2*pi*fd*t[n]).
+
+    The first axis of ``CSI`` is time; all remaining axes are treated as
+    independent channels and are preserved in the returned coefficient map.
+    For the simulator's ``(frame, Tx, Rx, subcarrier)`` input, the output has
+    shape ``(Tx, Rx, subcarrier)``.  With ``num_Tx == 1``, ``Z_fd[0]`` is the
+    ``(Rx, subcarrier)`` map used in the research formulation.
+
+    The projection interval is centred on ``frame_idx`` and contains exactly
+    ``avg_frames`` samples whenever the recording is long enough.  Near either
+    boundary the interval is shifted, rather than shortened.  If the complete
+    recording is shorter than ``avg_frames``, all available frames are used;
+    this matches ``MUSIC.Azi_ToF.sample_csi_segment``.
+
+    Parameters
+    ----------
+    CSI : array_like, shape (num_frames, ...)
+        Real-valued dynamic linear-power CSI (for example, after background
+        subtraction).  This is not complex CSI reconstruction.
+    target_fd : float
+        Signed target Doppler in Hz, e.g. ``target['fd']``.
+    frame_idx : int
+        Frame about which the projection context is selected.
+    avg_frames : int
+        Requested number of projection frames.
+    fs : float
+        CSI frame sampling rate in Hz.
+    window : {'hann', 'rect'}, default='hann'
+        Temporal weight ``h[n]``. ``'rect'`` uses equal weights.
+    normalize : bool, default=False
+        Divide by ``sum(h)`` when True.  The default returns the unnormalised
+        sum written in the research equation; covariance-based MUSIC is
+        unaffected by this common scalar.
+
+    Returns
+    -------
+    Z_fd : ndarray, complex
+        Doppler-conditioned coefficient map with shape ``CSI.shape[1:]``.
+    """
+    frame_idx = getattr(args, "plot_frame", getattr(args, "frame_idx", None))
+    if frame_idx is None:
+        raise AttributeError("args must define plot_frame or frame_idx")
+    avg_frames = args.avg_frames
+    fs = args.fs
+
+    csi = np.asarray(CSI)
+    if csi.ndim < 2:
+        raise ValueError(
+            "CSI must have time as its first axis and at least one channel axis"
+        )
+    if csi.shape[0] == 0:
+        raise ValueError("CSI must contain at least one frame")
+    if np.iscomplexobj(csi):
+        raise ValueError(
+            "CSI must be real dynamic linear power, not reconstructed complex CSI"
+        )
+    if not np.all(np.isfinite(csi)):
+        raise ValueError("CSI must contain only finite values")
+
+    target_fd = float(target_fd)
+    fs = float(fs)
+    avg_frames = int(avg_frames)
+    if not np.isfinite(target_fd):
+        raise ValueError(f"target_fd must be finite, got {target_fd}")
+    if not np.isfinite(fs) or fs <= 0.0:
+        raise ValueError(f"fs must be positive and finite, got {fs}")
+    if avg_frames <= 0:
+        raise ValueError(f"avg_frames must be positive, got {avg_frames}")
+
+    total_frames = csi.shape[0]
+    context_len = min(avg_frames, total_frames)
+    frame_idx = int(np.clip(frame_idx, 0, total_frames - 1))
+    start = int(
+        np.clip(
+            frame_idx - context_len // 2,
+            0,
+            total_frames - context_len,
+        )
+    )
+    end = start + context_len
+
+    if window == "hann":
+        # np.hanning(2) is all zeros, so use equal weights for tiny contexts.
+        weights = (
+            np.hanning(context_len)
+            if context_len >= 3
+            else np.ones(context_len)
+        )
+    elif window == "rect":
+        weights = np.ones(context_len)
+    else:
+        raise ValueError(f"window must be 'hann' or 'rect', got {window!r}")
+
+    # Absolute sample time preserves a consistent coefficient phase when the
+    # projection centre changes.  target_fd keeps its sign here.
+    times_s = np.arange(start, end, dtype=float) / fs
+    demodulator = weights * np.exp(-1j * 2.0 * np.pi * target_fd * times_s)
+    Z_fd = np.tensordot(demodulator, csi[start:end], axes=(0, 0))
+
+    if normalize:
+        Z_fd = Z_fd / np.sum(weights)
+    return Z_fd
+
+
+def projected_Azi_ToF(CSI, args, target_fds, window="hann", normalize=False):
+    """Calculate one Doppler-conditioned Azi-ToF spectrum per target fd.
+
+    ``doppler_projection`` collapses ``avg_frames`` into one coefficient map
+    with shape ``(Tx, Rx, subcarrier)``.  A singleton projected-window axis is
+    added before passing the map to ``MUSIC.Azi_ToF``, whose input contract is
+    ``(window, Tx, Rx, subcarrier)``.
+    """
+    target_fds = np.asarray(target_fds, dtype=float).reshape(-1)
+    if not np.all(np.isfinite(target_fds)):
+        raise ValueError("target_fds must contain only finite values")
+
+    plot_frame_idx = getattr(
+        args,
+        "plot_frame",
+        getattr(args, "frame_idx", None),
+    )
+    if plot_frame_idx is None:
+        raise AttributeError("args must define plot_frame or frame_idx")
+
+    azi_tof = MUSIC.Azi_ToF(args)
+    results = []
+    for target_idx, fd in enumerate(target_fds, start=1):
+        Z_fd = doppler_projection(
+            CSI,
+            fd,
+            args,
+            window=window,
+            normalize=normalize,
+        )
+        projected_snapshot = Z_fd[np.newaxis, ...]
+        title = (
+            f"Projected Azimuth-ToF target {target_idx:02d} "
+            f"fd {fd:+.2f} Hz"
+        )
+        fd_sign = "p" if fd >= 0.0 else "m"
+        fd_token = f"{abs(fd):.2f}".replace(".", "p")
+        file_name = (
+            f"{plot_frame_idx}_projected_target_{target_idx:02d}_"
+            f"fd_{fd_sign}{fd_token}Hz.png"
+        )
+        tau_grid, theta_grid, spectrum_db = azi_tof.gen_spectrum(
+            projected_snapshot,
+            frame_idx=0,
+            title=title,
+            plot_frame_idx=plot_frame_idx,
+            file_name=file_name,
+        )
+        results.append(
+            {
+                "fd": float(fd),
+                "Z_fd": Z_fd,
+                "tau_grid": tau_grid,
+                "theta_grid": theta_grid,
+                "spectrum_db": spectrum_db,
+                "file_name": file_name,
+            }
+        )
+
+    return results
+
 
 
 def _axis_cell_counts(value, name, *, minimum):
@@ -175,161 +348,3 @@ def cfar_2D(
     for rank, target in enumerate(targets, start=1):
         target["rank"] = rank
     return targets
-
-
-def design_mat(time_s, target_fd_hz=None, *, include_trend=True):
-    """Build the local null or target-Doppler regression design matrix.
-
-    ``target_fd_hz=None`` builds the null model ``M0`` with an intercept and,
-    optionally, a linear trend. Passing a signed Doppler builds ``M1`` by
-    appending cosine and sine columns at that frequency.
-
-    The sample index is centred before it is used as the trend coordinate.
-    This preserves the model subspace while improving numerical conditioning.
-    """
-    time_s = np.asarray(time_s, dtype=float)
-    if time_s.ndim != 1 or time_s.size == 0:
-        raise ValueError("time_s must be a non-empty 1-D array")
-    if not np.all(np.isfinite(time_s)):
-        raise ValueError("time_s must contain only finite values")
-
-    columns = [np.ones(time_s.size, dtype=float)]
-    if include_trend:
-        sample_index = np.arange(time_s.size, dtype=float)
-        sample_index -= np.mean(sample_index)
-        columns.append(sample_index)
-
-    if target_fd_hz is not None:
-        target_fd_hz = float(target_fd_hz)
-        if not np.isfinite(target_fd_hz):
-            raise ValueError("target_fd_hz must be finite")
-        if target_fd_hz == 0.0:
-            raise ValueError(
-                "target_fd_hz must be non-zero because its cosine column "
-                "would duplicate the intercept"
-            )
-        phase = 2.0 * np.pi * target_fd_hz * time_s
-        columns.extend((np.cos(phase), np.sin(phase)))
-
-    return np.column_stack(columns)
-
-
-def ls_solution(design_matrix, y, weights=None):
-    """Solve weighted LS for one or many time-first power sequences.
-
-    ``design_matrix`` has shape ``(num_samples, num_coefficients)`` and ``y``
-    may have shape ``(num_samples,)`` or ``(num_samples, ...)``. ``weights`` is
-    the diagonal of the research model's weighting matrix ``W``.
-
-    Returns a dictionary containing ``coefficients``, ``fitted``, ``residual``,
-    weighted ``sse``, matrix ``rank``, and ``singular_values``. For an ``M1``
-    matrix from :func:`design_mat`, the final two coefficients are ``a`` and
-    ``b`` respectively.
-    """
-    design_matrix = np.asarray(design_matrix, dtype=float)
-    y = np.asarray(y, dtype=float)
-    if design_matrix.ndim != 2:
-        raise ValueError("design_matrix must be 2-D")
-    if y.ndim == 0 or y.shape[0] != design_matrix.shape[0]:
-        raise ValueError(
-            "the first axis of y must match the number of design-matrix rows"
-        )
-    if not np.all(np.isfinite(design_matrix)) or not np.all(np.isfinite(y)):
-        raise ValueError("design_matrix and y must contain only finite values")
-
-    num_samples, num_coefficients = design_matrix.shape
-    if num_samples < num_coefficients:
-        raise ValueError(
-            "weighted LS requires at least as many samples as coefficients; "
-            f"got {num_samples} samples and {num_coefficients} coefficients"
-        )
-
-    if weights is None:
-        weights = np.ones(num_samples, dtype=float)
-    else:
-        weights = np.asarray(weights, dtype=float)
-        if weights.shape != (num_samples,):
-            raise ValueError(f"weights must have shape ({num_samples},)")
-        if not np.all(np.isfinite(weights)) or np.any(weights < 0.0):
-            raise ValueError("weights must contain finite non-negative values")
-        if not np.any(weights > 0.0):
-            raise ValueError("at least one weight must be positive")
-
-    feature_shape = y.shape[1:]
-    y_flat = y.reshape(num_samples, -1)
-    sqrt_weights = np.sqrt(weights)
-    weighted_design = design_matrix * sqrt_weights[:, None]
-    weighted_y = y_flat * sqrt_weights[:, None]
-
-    coefficients_flat, _, rank, singular_values = np.linalg.lstsq(
-        weighted_design, weighted_y, rcond=None
-    )
-    fitted_flat = design_matrix @ coefficients_flat
-    residual_flat = y_flat - fitted_flat
-    sse_flat = np.sum(weights[:, None] * residual_flat**2, axis=0)
-
-    coefficients = coefficients_flat.reshape((num_coefficients,) + feature_shape)
-    fitted = fitted_flat.reshape(y.shape)
-    residual = residual_flat.reshape(y.shape)
-    sse = sse_flat.reshape(feature_shape)
-    if not feature_shape:
-        sse = float(sse)
-
-    return {
-        "coefficients": coefficients,
-        "fitted": fitted,
-        "residual": residual,
-        "sse": sse,
-        "rank": int(rank),
-        "singular_values": singular_values,
-    }
-
-
-def fitting_strength(a, b=None):
-    """Return ``R = sqrt(a**2 + b**2)`` for target-Doppler coefficients.
-
-    If ``b`` is omitted, ``a`` is interpreted as an LS coefficient array and
-    its final two rows are used as the cosine and sine coefficients.
-    """
-    if b is None:
-        coefficients = np.asarray(a, dtype=float)
-        if coefficients.ndim == 0 or coefficients.shape[0] < 2:
-            raise ValueError("coefficients must contain cosine and sine rows")
-        a, b = coefficients[-2], coefficients[-1]
-
-    strength = np.hypot(np.asarray(a, dtype=float), np.asarray(b, dtype=float))
-    if strength.ndim == 0:
-        return float(strength)
-    return strength
-
-
-def fitting_quality(sse_0, sse_1, epsilon=1e-12):
-    """Return ``Q = max(0, 1 - SSE1 / (SSE0 + epsilon))``.
-
-    ``SSE0`` is from the offset/trend-only null model and ``SSE1`` is from the
-    model that additionally contains the target-Doppler cosine/sine basis.
-    Scalars or broadcast-compatible arrays are supported.
-    """
-    sse_0 = np.asarray(sse_0, dtype=float)
-    sse_1 = np.asarray(sse_1, dtype=float)
-    epsilon = float(epsilon)
-    if not np.all(np.isfinite(sse_0)) or not np.all(np.isfinite(sse_1)):
-        raise ValueError("sse_0 and sse_1 must contain only finite values")
-    if np.any(sse_0 < 0.0) or np.any(sse_1 < 0.0):
-        raise ValueError("sse_0 and sse_1 must be non-negative")
-    if not np.isfinite(epsilon) or epsilon <= 0.0:
-        raise ValueError("epsilon must be positive and finite")
-
-    quality = np.maximum(0.0, 1.0 - sse_1 / (sse_0 + epsilon))
-    if quality.ndim == 0:
-        return float(quality)
-    return quality
-
-
-__all__ = [
-    "cfar_2D",
-    "design_mat",
-    "fitting_quality",
-    "fitting_strength",
-    "ls_solution",
-]

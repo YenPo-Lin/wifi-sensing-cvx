@@ -179,7 +179,6 @@ def self_sanitize(x):
 def MA(csi_amp, window_size):
     window_size = int(round(window_size))
     window = np.ones(window_size) / window_size
-    
     return np.apply_along_axis(lambda m: np.convolve(m, window, mode='same'), axis=0, arr=csi_amp)
 
 def PCA_time(CSI, window_size, k=3):
