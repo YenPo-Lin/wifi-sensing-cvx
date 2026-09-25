@@ -31,14 +31,14 @@ def create_parser():
     parser.add_argument('--ToF_Dop_Sdim', type=int, default=2)
     parser.add_argument('--Azi_Dop_Sdim', type=int, default=None)
     parser.add_argument('--Azi_ToF_Dop_Sdim', type=int, default=None)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.70)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.60)
     parser.add_argument('--avg_frames', type=int, default=50)
     parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
     parser.add_argument('--stream_win', type=int, default=5)
     parser.add_argument('--stream_sample_range', type=int, default=8) #all Rx
 
-    parser.add_argument('--freq_win', type=int, default=44) #block size = freq_win // freq_hop
+    parser.add_argument('--freq_win', type=int, default=40) #block size = freq_win // freq_hop
     parser.add_argument('--freq_hop', type=int, default=3)
     parser.add_argument('--freq_sample_range', type=int, default=64) #all subcarriers
     parser.add_argument('--freq_space', type=int, default=1) # if freq resampling
@@ -81,7 +81,7 @@ def create_parser():
     parser.add_argument('--cube_point_size', type=float, default=4.0)
     parser.add_argument('--cube_point_alpha_min', type=float, default=0.1)
     parser.add_argument('--cube_point_alpha_max', type=float, default=3.0)
-    parser.add_argument('--cube_point_alpha_gamma', type=float, default=1.5)
+    parser.add_argument('--cube_point_alpha_gamma', type=float, default=2.5)
     # gamma 越高，藍色區域越透明，黃紅色峰值仍接近不透明
     
     
@@ -95,7 +95,7 @@ def create_parser():
     parser.add_argument('--cfar_top_k', type=int, default=20)
     parser.add_argument('--cfar_min_peak_distance', type=int, default=1)
     parser.add_argument('--cfar_min_prominence_db', type=float, default=0.0)
-    parser.add_argument('--fd_band', type=float, default=1.0)
+    parser.add_argument('--fd_band', type=float, default=2.0)
 
 
     

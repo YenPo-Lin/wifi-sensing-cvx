@@ -382,7 +382,7 @@ def gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="sum", tx=0):
         x_axis="doppler",
         y_axis="tof",
         file_suffix="tof_doppler_heatmap",
-        sdim=tof_dop.last_Sdim,
+        sdim=tof_dop.Sdim,
     )
 
     if method == "sum":

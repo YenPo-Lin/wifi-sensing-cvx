@@ -52,7 +52,7 @@ def _plot_target_gt(ax, target_gt, x_axis, y_axis, args):
         zorder=3,
     )
 
-def plot_3D_cube(
+def plot_3D_point_cloud(
     frame_idx,
     azi_values,
     tof_values,
@@ -64,6 +64,7 @@ def plot_3D_cube(
     ax=None,
     save=True,
     show_colorbar=None,
+    file_name=None,
 ):
     """Render an ``(azimuth, ToF, Doppler)`` MUSIC cube as a point cloud."""
     azi_values = np.asarray(azi_values, dtype=float)
@@ -206,7 +207,9 @@ def plot_3D_cube(
     if save and args.pics_dir is not None:
         save_dir = os.path.join(args.pics_dir, "Azi_ToF_Doppler")
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"{frame_idx}.png")
+        if file_name is None:
+            file_name = f"{frame_idx:04d}.png"
+        save_path = os.path.join(save_dir, file_name)
         ax.figure.savefig(
             save_path,
             dpi=160,
@@ -303,8 +306,7 @@ def plot_spectrum(
             output_folder_by_axes[frozenset(spectrum_axes)],
         )
         os.makedirs(save_dir, exist_ok=True)
-        if file_name is None:
-            file_name = f"{frame_idx}.png"
+        file_name = file_name or f"{frame_idx:04d}.png"
         save_path = os.path.join(save_dir, file_name)
         ax.figure.savefig(save_path, dpi=100)
         plt.close(ax.figure)

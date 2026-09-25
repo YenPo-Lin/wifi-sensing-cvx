@@ -151,14 +151,13 @@ def projected_Azi_ToF(CSI, args, target_fds, window="hann", normalize=False):
         fd_sign = "p" if fd >= 0.0 else "m"
         fd_token = f"{abs(fd):.2f}".replace(".", "p")
         file_name = (
-            f"{plot_frame_idx}_projected_target_{target_idx:02d}_"
+            f"{int(plot_frame_idx):04d}_projected_target_{target_idx:02d}_"
             f"fd_{fd_sign}{fd_token}Hz.png"
         )
         tau_grid, theta_grid, spectrum_db = azi_tof.gen_spectrum(
             projected_snapshot,
-            frame_idx=0,
+            frame_idx=plot_frame_idx,
             title=title,
-            plot_frame_idx=plot_frame_idx,
             file_name=file_name,
         )
         results.append(
