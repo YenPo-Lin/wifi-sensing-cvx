@@ -359,7 +359,7 @@ def targets_csi_config():
             "theta": 80.0,
             "tof": 10e-9,
             "fd": 3.0,
-            "amplitude": 0.30,
+            "amplitude": 0.50,
             "activity_start_s": 0.10,
             "activity_end_s": 0.60,
             "activity_ramp_s": 0.10,

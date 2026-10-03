@@ -223,48 +223,47 @@ def plot_3D_point_cloud(
 
 def plot_spectrum(
     frame_idx,
-    axis0_values,
-    axis1_values,
+    x_values,
+    y_values,
     P_music,
     args,
     title="",
-    x_axis=None,
-    y_axis=None,
-    sdim=None,
     spectrum_axes=None,
+    sdim=None,
     ax=None,
     save=True,
     show_colorbar=None,
     target_gt=None,
     file_name=None,
 ):
-    if spectrum_axes is None or len(spectrum_axes) != 2:
-        raise ValueError("spectrum_axes=(axis0, axis1) is required.")
+    """Plot a (y, x) spectrum; ``spectrum_axes`` names the displayed (X, Y)."""
+    if (
+        spectrum_axes is None
+        or len(spectrum_axes) != 2
+        or spectrum_axes[0] == spectrum_axes[1]
+    ):
+        raise ValueError("spectrum_axes=(x_axis, y_axis) is required.")
 
-    axis0, axis1 = spectrum_axes
-    if {x_axis, y_axis} != {axis0, axis1}:
-        raise ValueError("x_axis/y_axis must match spectrum_axes.")
-
-    axis0_values = np.asarray(axis0_values)
-    axis1_values = np.asarray(axis1_values)
+    x_axis, y_axis = spectrum_axes
+    x_values = np.asarray(x_values)
+    y_values = np.asarray(y_values)
     P_music = np.asarray(P_music)
-    if P_music.shape != (len(axis0_values), len(axis1_values)):
+    if P_music.shape != (len(y_values), len(x_values)):
         raise ValueError(
-            f"Expected spectrum shape {(len(axis0_values), len(axis1_values))}, "
+            f"Expected spectrum shape {(len(y_values), len(x_values))} "
+            "for (y, x), "
             f"got {P_music.shape}."
         )
 
-    values_by_axis = {axis0: axis0_values, axis1: axis1_values}
-    x_values, x_label = _axis_values_and_label(x_axis, values_by_axis[x_axis], args)
-    y_values, y_label = _axis_values_and_label(y_axis, values_by_axis[y_axis], args)
-    plot_values = P_music.T if x_axis == axis0 else P_music
+    x_values, x_label = _axis_values_and_label(x_axis, x_values, args)
+    y_values, y_label = _axis_values_and_label(y_axis, y_values, args)
 
     if ax is None:
         _, ax = plt.subplots()
     mesh = ax.pcolormesh(
         x_values,
         y_values,
-        plot_values,
+        P_music,
         cmap='jet',
         shading='auto',
     )
@@ -313,3 +312,78 @@ def plot_spectrum(
         print(f"Saved: {save_path}")
 
     return ax
+
+
+def plot_1D_spectrum(frame_idx, fd_grid, spectrum_db, args, *, title="Doppler MUSIC", sdim=None):
+    """Save a single-frame Doppler MUSIC curve."""
+    fig, ax = plt.subplots(figsize=(8, 3.5), constrained_layout=True)
+    ax.plot(fd_grid, spectrum_db)
+    ax.set_xlabel("Doppler frequency (Hz)")
+    ax.set_ylabel("MUSIC pseudo-spectrum (dB)")
+    ax.set_title(f"{title} @ frame {int(frame_idx)}" + (f" Sdim {sdim}" if sdim is not None else ""))
+    ax.grid(alpha=0.25)
+    if getattr(args, "pics_dir", None) is not None:
+        save_dir = os.path.join(args.pics_dir, "Doppler")
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, f"{int(frame_idx):04d}.png")
+        fig.savefig(save_path, dpi=120)
+        plt.close(fig)
+        print(f"Saved: {save_path}")
+    return ax
+
+
+def plot_conti_spectrum(time_s, fd_grid, spectrum_db, args, file_name="continuous.png", *, reference_rx=None):
+    """Save four C0-link Doppler maps in one vertical figure."""
+    time_s = np.asarray(time_s, dtype=float)
+    fd_grid = np.asarray(fd_grid, dtype=float)
+    spectrum_db = np.asarray(spectrum_db, dtype=float)
+    if time_s.ndim != 1 or fd_grid.ndim != 1 or not time_s.size or not fd_grid.size:
+        raise ValueError("time_s and fd_grid must be nonempty 1-D arrays")
+    if spectrum_db.shape != (1, 4, fd_grid.size, time_s.size):
+        raise ValueError(
+            "Expected four Rx-pair maps with shape "
+            f"(1, 4, {fd_grid.size}, {time_s.size}), got {spectrum_db.shape}"
+        )
+    if not np.all(np.isfinite(spectrum_db)):
+        raise ValueError("Doppler maps must contain only finite values")
+    if reference_rx is not None:
+        reference_rx = np.asarray(reference_rx)
+        if reference_rx.shape != (time_s.size, 4) or not np.isin(reference_rx, (0, 1)).all():
+            raise ValueError("reference_rx must have shape (time, 4) and contain only 0 or 1")
+
+    fig, axes = plt.subplots(4, 1, figsize=(12, 13), sharex=True, sharey=True, constrained_layout=True)
+    for rx_idx, ax in enumerate(axes):
+        panel = spectrum_db[0, rx_idx]
+        vmin, vmax = float(panel.min()), float(panel.max())
+        if vmin == vmax:
+            vmin, vmax = vmin - 0.5, vmax + 0.5
+        mesh = ax.pcolormesh(
+            time_s, fd_grid, panel, cmap="jet", shading="auto",
+            vmin=vmin, vmax=vmax,
+        )
+        rx_first = 2 * rx_idx + 1
+        forward = f"Rx{rx_first} × Rx{rx_first + 1}.conj()"
+        reverse = f"Rx{rx_first + 1} × Rx{rx_first}.conj()"
+        if reference_rx is None or np.all(reference_rx[:, rx_idx] == 0):
+            title = forward
+        elif np.all(reference_rx[:, rx_idx] == 1):
+            title = reverse
+        else:
+            forward_fraction = np.mean(reference_rx[:, rx_idx] == 0)
+            title = f"{forward} ({forward_fraction:.0%}) | {reverse} ({1-forward_fraction:.0%})"
+        ax.set_title(title)
+        ax.set_ylabel("Doppler frequency (Hz)")
+        colorbar = fig.colorbar(mesh, ax=ax, pad=0.02)
+        colorbar.set_label("MUSIC pseudo-spectrum (dB)")
+        colorbar.outline.set_visible(False)
+    axes[-1].set_xlabel("Time (s)")
+    fig.suptitle("Continuous Doppler MUSIC")
+
+    if getattr(args, "pics_dir", None) is not None:
+        save_dir = os.path.join(args.pics_dir, "Doppler")
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, file_name)
+        fig.savefig(save_path, dpi=120)
+        plt.close(fig)
+        print(f"Saved: {save_path}")
+    return axes
