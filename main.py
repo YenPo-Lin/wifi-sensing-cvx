@@ -10,7 +10,7 @@ def create_parser():
     parser = argparse.ArgumentParser()
 
     # npz 文件路徑
-    file_path = "/Users/YPL/Documents/NPZ_files/20261002-205358_ten_clap_256.npz"
+    file_path = "/Users/YPL/Documents/NPZ_files/20260922-150619_FB_swing.npz"
     parser.add_argument('--csi_file', type=str, default=file_path)
     
     # ---- CSI parameters ----
@@ -21,23 +21,25 @@ def create_parser():
     # ---- MUSIC settings ----
     parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'dwt', 'pca'])
     # plotted frame
-    parser.add_argument('--frame_idx', type=int, default=1100)
+    parser.add_argument('--frame_idx', type=int, default=1380)
     # MUSIC signal dimension
     parser.add_argument('--Dop_Sdim', type=int, default=None)
     parser.add_argument('--Azi_ToF_Sdim', type=int, default=7)
+    parser.add_argument('--Projected_Azi_ToF_Sdim_ratio', type=float, default=0.3)
     parser.add_argument('--ToF_Dop_Sdim', type=int, default=None)
+    parser.add_argument('--Beamformed_ToF_Dop_Sdim_ratio', type=float, default=0.58)
     parser.add_argument('--Azi_Dop_Sdim', type=int, default=None)
     parser.add_argument('--Azi_ToF_Dop_Sdim', type=int, default=None)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.8)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.58)
     parser.add_argument('--avg_frames', type=int, default=100)
     parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
     parser.add_argument('--stream_win', type=int, default=5) ## Azimuth Steering Vector length = stream_win
     parser.add_argument('--stream_sample_range', type=int, default=8) #all Rx
 
-    parser.add_argument('--freq_win', type=int, default=240) 
-    parser.add_argument('--freq_hop', type=int, default=10) ## ToF Steering Vector length = freq_win//freq_hop 
-    parser.add_argument('--freq_sample_range', type=int, default=256) #all subcarriers
+    parser.add_argument('--freq_win', type=int, default=56) 
+    parser.add_argument('--freq_hop', type=int, default=3) ## ToF Steering Vector length = freq_win//freq_hop 
+    parser.add_argument('--freq_sample_range', type=int, default=64) #all subcarriers
     parser.add_argument('--freq_space', type=int, default=1) # if freq resampling
 
 
@@ -52,16 +54,16 @@ def create_parser():
     # Azimuth grid
     parser.add_argument('--theta_min', type=float, default= 0)
     parser.add_argument('--theta_max', type=float, default= 180)
-    parser.add_argument('--theta_step', type=int, default=3)
+    parser.add_argument('--theta_step', type=int, default=2)
     # Time of Flight grid
     parser.add_argument('--axis', type=str, default='m', choices=['ns', 'm'])
-    parser.add_argument('--tau_min', type=float, default=0e-9)
-    parser.add_argument('--tau_max', type=float, default=10e-9)
+    parser.add_argument('--tau_min', type=float, default=2e-9)
+    parser.add_argument('--tau_max', type=float, default=15e-9)
     parser.add_argument('--tau_step', type=float, default=2e-10)
     # Doppler grid
     parser.add_argument('--doppler_min', type=float, default=-30)
     parser.add_argument('--doppler_max', type=float, default=30)
-    parser.add_argument('--doppler_step', type=float, default=1)
+    parser.add_argument('--doppler_step', type=float, default=0.5)
 
     # Doppler spectrogram settings
     parser.add_argument('--stft_nperseg', type=int, default=64)
@@ -74,10 +76,8 @@ def create_parser():
     # 3D MUSIC cube display
 
     parser.add_argument('--cube_dynamic_range_db', type=float, default=10.0)
-    # 數值變小：保留範圍更窄，圖形更集中於峰值。
-    # 數值變大：保留更多低功率點，point cloud 更散。
+    # Controls only the direct 3D MUSIC cube rendering.
     parser.add_argument('--cube_percentile', type=float, default=95.0)
-    # 只保留功率位於前 10% 的點。
     parser.add_argument('--cube_max_points', type=int, default=60000)
     parser.add_argument('--cube_point_size', type=float, default=3.0)
     parser.add_argument('--cube_point_alpha_min', type=float, default=0.12)
@@ -85,18 +85,26 @@ def create_parser():
     parser.add_argument('--cube_point_alpha_gamma', type=float, default=5)
     # gamma 越高，藍色區域越透明，黃紅色峰值仍接近不透明
 
+    # Doppler-Spatial Point Cloud display
+    # These settings do not affect the direct 3D MUSIC cube above.
+    parser.add_argument('--point_cloud_dynamic_range_db', type=float, default=1.0)
+    parser.add_argument('--point_cloud_percentile', type=float, default=10.0)
+    parser.add_argument('--point_cloud_max_points', type=int, default=60000)
+    parser.add_argument('--point_cloud_point_size', type=float, default=12.0)
+    parser.add_argument('--point_cloud_point_alpha', type=float, default=0.4)
+
     # Doppler Projection settings
     parser.add_argument('--tof_gating', action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument('--tof_gate', type=float, default=3e-9)
+    parser.add_argument('--tof_gate', type=float, default=6e-9)
     
     # ---- 圖片保存路徑 ----
     parser.add_argument('--pics_dir', type=str, default=None)
     
     # ----CFAR ----
-    parser.add_argument('--cfar_training_cells', type=int, default=2)
+    parser.add_argument('--cfar_training_cells', type=int, default=1)
     parser.add_argument('--cfar_guard_cells', type=int, default=1)
-    parser.add_argument('--cfar_threshold_factor', type=float, default=1.05)
-    parser.add_argument('--cfar_top_k', type=int, default=20)
+    parser.add_argument('--cfar_threshold_factor', type=float, default=1.0)
+    parser.add_argument('--cfar_top_k', type=int, default=7)
     parser.add_argument('--cfar_min_peak_distance', type=int, default=1)
     parser.add_argument('--cfar_min_prominence_db', type=float, default=0.0)
     parser.add_argument('--fd_band', type=float, default=2.0)

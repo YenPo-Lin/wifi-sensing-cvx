@@ -4,6 +4,7 @@ from tqdm import tqdm
 import pre_processing as pp
 import Plot
 import matplotlib.pyplot as plt
+import weight_generation
 
 
 
@@ -648,7 +649,14 @@ class Azi_ToF:
                 row += 1
         return A
 
-    def cal_spectrum(self, Rxx, return_sdim=False):
+    def cal_spectrum(
+        self,
+        Rxx,
+        return_sdim=True,
+        sdim_attr=None,
+        energy_ratio_attr=None,
+        label="Azi-ToF",
+    ):
         """Calculate the linear AoA-ToF MUSIC spectrum in ToF chunks."""
         Rxx = np.asarray(Rxx, dtype=np.complex128)
         expected_dim = self.stream_win * self.freq_win_points
@@ -660,7 +668,15 @@ class Azi_ToF:
         eig_val = eig_val[idx_order]
         eig_vec = eig_vec[:, idx_order]
 
-        if self.Sdim is None:
+        if sdim_attr is not None or energy_ratio_attr is not None:
+            Sdim = resolve_Sdim(
+                self.args,
+                eig_val,
+                label=label,
+                sdim_attr=sdim_attr or "Azi_ToF_Sdim",
+                energy_ratio_attr=energy_ratio_attr or "Sdim_energy_ratio",
+            )
+        elif self.Sdim is None:
             Sdim = resolve_Sdim(self.args, eig_val, label="Azi-ToF")
         else:
             Sdim = int(np.clip(self.Sdim, 1, expected_dim - 1))
@@ -695,10 +711,17 @@ class Azi_ToF:
         file_name=None,
         plot=True,
         return_sdim=False,
+        sdim_attr=None,
+        energy_ratio_attr=None,
+        sdim_label="Azi-ToF",
     ):
         Rxx = self.Rxx_smooth(CSI, frame_idx)
         tau_grid, theta_grid, P_azi_tof, Sdim = self.cal_spectrum(
-            Rxx, return_sdim=True
+            Rxx,
+            return_sdim=True,
+            sdim_attr=sdim_attr,
+            energy_ratio_attr=energy_ratio_attr,
+            label=sdim_label,
         )
         P_azi_tof_db = 10.0 * np.log10(np.maximum(P_azi_tof, 1e-12))
 
@@ -721,54 +744,202 @@ class Azi_ToF:
         return result
 
 
-    def gen_Doppler_projection_spectrum(self, CSI, frame_idx, window="hann", normalize=False, fig_name = "Project_tg"):
-        """Calculate one Doppler-conditioned Azi-ToF spectrum per target fd.
+    def gen_Doppler_projection_spectrum(
+        self,
+        CSI,
+        frame_idx,
+        fd_neighbor=0,
+        doppler_step=1.0,
+        window="hann",
+        normalize=False,
+        fig_name="Project_tg",
+    ):
+        """Generate one frequency-band-summed Azi-ToF map per target."""
+        return self._doppler_projection_band_spectra(
+            CSI,
+            frame_idx,
+            fd_neighbor=fd_neighbor,
+            doppler_step=doppler_step,
+            window=window,
+            normalize=normalize,
+            fig_name=fig_name,
+            plot=True,
+        )
+
+    def return_Doppler_projection_spectrum(
+        self,
+        CSI,
+        frame_idx,
+        fd_neighbor=0,
+        doppler_step=1.0,
+        window="hann",
+        normalize=False,
+        fig_name="Project_tg",
+    ):
+        """Return one frequency-band-summed Azi-ToF map per target."""
+        return self._doppler_projection_band_spectra(
+            CSI,
+            frame_idx,
+            fd_neighbor=fd_neighbor,
+            doppler_step=doppler_step,
+            window=window,
+            normalize=normalize,
+            fig_name=fig_name,
+            plot=False,
+        )
+
+    def _doppler_projection_band_spectra(
+        self,
+        CSI,
+        frame_idx,
+        fd_neighbor,
+        doppler_step,
+        window,
+        normalize,
+        fig_name,
+        plot,
+    ):
+        """Sum projected Azi-ToF maps over each target's Doppler band.
 
         ``doppler_projection`` collapses ``avg_frames`` into one coefficient map
         with shape ``(Tx, Rx, subcarrier)``.  A singleton projected-window axis is
         added before passing the map to ``MUSIC.Azi_ToF``, whose input contract is
-        ``(window, Tx, Rx, subcarrier)``.  After generating every target spectrum,
-        the spectra are converted from dB back to linear power, summed across
-        targets, converted to dB once, and saved as one additional Azi-ToF map.
+        ``(window, Tx, Rx, subcarrier)``. ``fd_neighbor`` is the Doppler radius
+        in Hz, and frequencies spaced by ``doppler_step`` are projected from
+        ``fd - fd_neighbor`` through ``fd + fd_neighbor``. Every unique frequency
+        is calculated once. For each target, its maps are converted back to linear
+        power, summed, and converted to dB to produce one output map at the target's
+        detected center Doppler.
         """
+        if isinstance(fd_neighbor, (bool, np.bool_)):
+            raise ValueError("fd_neighbor must be non-negative and finite")
+        fd_neighbor = float(fd_neighbor)
+        if not np.isfinite(fd_neighbor) or fd_neighbor < 0.0:
+            raise ValueError("fd_neighbor must be non-negative and finite")
+        doppler_step = float(doppler_step)
+        if not np.isfinite(doppler_step) or doppler_step <= 0.0:
+            raise ValueError("doppler_step must be positive and finite")
+        neighbor_bin_count = int(
+            np.floor(fd_neighbor / doppler_step + 1e-12)
+        )
+
         tof_dop = ToF_Dop(self.args)
         targets = tof_dop.estimate_target_tof_doppler(CSI, frame_idx)
         if not targets:
             print("No targets available for Azi-ToF Doppler-band projection.")
             return []
 
-        azi_tof = Azi_ToF(self.args)
-        results = []
-        spectrum_dbs = []
-
+        # Store each target's band membership while deduplicating the actual
+        # projection frequencies globally.
+        projection_bins = {}
+        target_bands = []
         for target in targets:
-            fd = target['fd']
+            center_fd = float(target["fd"])
+            band_members = []
+            for offset_bin in range(-neighbor_bin_count, neighbor_bin_count + 1):
+                requested_fd = center_fd + offset_bin * doppler_step
 
+                if (requested_fd < self.args.doppler_min - 1e-12 or requested_fd > self.args.doppler_max + 1e-12):
+                    continue
+                fd_idx = int(np.rint((requested_fd - self.args.doppler_min) / doppler_step))
+
+                fd = float(self.args.doppler_min + fd_idx * doppler_step)
+                projection_bins.setdefault(fd_idx, fd)
+                band_members.append((fd_idx, offset_bin))
+            target_bands.append((target, band_members))
+
+        print(
+            f"Doppler projection: {len(targets)} targets use "
+            f"{len(projection_bins)} unique frequencies and produce at most "
+            f"{len(targets)} band-summed maps "
+            f"(fd_neighbor={fd_neighbor:g} Hz, "
+            f"doppler_step={doppler_step:g} Hz)"
+        )
+
+        azi_tof = Azi_ToF(self.args)
+        projected_maps = {}
+        for fd_idx, fd in projection_bins.items():
             Z_fd = azi_tof.doppler_projection(CSI, frame_idx, fd, self.args, window, normalize)
 
             projected_snapshot = Z_fd[np.newaxis, ...]
-            title = (f"Azimuth-ToF Project onto  tg #{target['rank']:02d} " f"fd {target['fd']:+.2f} Hz")
-
-            file_name = (f"{frame_idx:04d}_{fig_name}{target['rank']:02d}_" f"[{fd:+.2f}].png")
-
             tau_grid, theta_grid, spectrum_db, Sdim = azi_tof.gen_spectrum(
                 projected_snapshot,
                 frame_idx=frame_idx,
-                title=title,
-                file_name=file_name,
                 plot=False,
                 return_sdim=True,
+                sdim_attr="Projected_Azi_ToF_Sdim",
+                energy_ratio_attr="Projected_Azi_ToF_Sdim_ratio",
+                sdim_label="Projected Azi-ToF",
             )
+            projected_maps[fd_idx] = {
+                "fd": fd,
+                "Z_fd": Z_fd,
+                "spectrum_db": spectrum_db,
+                "Sdim": int(Sdim),
+            }
 
-            # ToF gating check
-            valid = (
-                not getattr(self.args, "tof_gating", True)
-                or self.tof_gating_check(spectrum_db, target['tau'], self.tof_gate)
+        results = []
+        for target, band_members in target_bands:
+            if not band_members:
+                continue
+
+            valid_members = []
+            rejected_fds = []
+            for fd_idx, offset_bin in band_members:
+                projected_map = projected_maps[fd_idx]
+                if (
+                    getattr(self.args, "tof_gating", True)
+                    and not self.tof_gating_check(
+                        projected_map["spectrum_db"],
+                        target["tau"],
+                        self.tof_gate,
+                    )
+                ):
+                    rejected_fds.append(float(projected_map["fd"]))
+                    continue
+                valid_members.append((fd_idx, offset_bin))
+
+            center_fd = float(target["fd"])
+            target_rank = int(target["rank"])
+            if not valid_members:
+                print(
+                    f"⚠️ Target #{target_rank:02d} fd {center_fd:+.2f} Hz: "
+                    "all projected frequencies failed the "
+                    f"{self.tof_gate * 1e9:.2f} ns ToF gate. Skip this target."
+                )
+                continue
+
+            band_maps = [
+                projected_maps[fd_idx] for fd_idx, _ in valid_members
+            ]
+            spectrum_linear_sum = np.sum(
+                [10.0 ** (item["spectrum_db"] / 10.0) for item in band_maps],
+                axis=0,
             )
+            spectrum_db = 10.0 * np.log10(
+                np.maximum(spectrum_linear_sum, 1e-12)
+            )
+            projection_fds = [float(item["fd"]) for item in band_maps]
 
-            # save each target specturm (db scale)
-            if valid:
+            if rejected_fds:
+                print(
+                    f"Target #{target_rank:02d} fd {center_fd:+.2f} Hz: "
+                    f"ToF gate kept {len(valid_members)}/{len(band_members)} "
+                    f"projected frequencies; rejected "
+                    + ", ".join(f"{fd:+.2f}" for fd in rejected_fds)
+                    + " Hz"
+                )
 
+            file_name = (
+                f"{frame_idx:04d}_{fig_name}{target_rank:02d}_"
+                f"[{center_fd:+.2f}].png"
+            )
+            if plot:
+                title = (
+                    f"Azimuth-ToF Projected Band Sum fd {center_fd:+.2f} Hz "
+                    f"[{min(projection_fds):+.2f}, "
+                    f"{max(projection_fds):+.2f}] Hz"
+                )
                 Plot.plot_spectrum(
                     frame_idx,
                     theta_grid,
@@ -776,48 +947,55 @@ class Azi_ToF:
                     spectrum_db.T,
                     self.args,
                     title=title,
-                    sdim=Sdim,
                     spectrum_axes=("azi", "tof"),
                     file_name=file_name,
                 )
-                spectrum_dbs.append(spectrum_db)
-
-                results.append(
-                    {
-                        "fd": float(fd),
-                        "Z_fd": Z_fd,
-                        "tau_grid": tau_grid,
-                        "theta_grid": theta_grid,
-                        "spectrum_db": spectrum_db,
-                        "file_name": file_name,
-                    }
+                """
+                # 畫圖用
+                Plot.plot_clean_spectrum(
+                    frame_idx,
+                    theta_grid,
+                    tau_grid,
+                    spectrum_db.T,
+                    self.args,
+                    file_name=f"{os.path.splitext(file_name)[0]}_clean.png",
                 )
-            else:
-                print(
-                    f"⚠️ Target fd {fd:+.2f} Hz, tau {target['tau'] * 1e9:.2f} ns "
-                    f"failed the {self.tof_gate * 1e9:.2f} ns ToF gate. "
-                    "Skip this target."
-                )
+                """
+            results.append(
+                {
+                    "fd": center_fd,
+                    "fd_idx": int(target["fd_idx"]),
+                    "fd_neighbor": fd_neighbor,
+                    "doppler_step": doppler_step,
+                    "target": target,
+                    "targets": [target],
+                    "target_ranks": [target_rank],
+                    "matched_target_ranks": [target_rank],
+                    "neighbor_offsets": [
+                        offset for _, offset in valid_members
+                    ],
+                    "neighbor_frequency_offsets_hz": [
+                        offset * doppler_step
+                        for _, offset in valid_members
+                    ],
+                    "projection_fd_indices": [
+                        fd_idx for fd_idx, _ in valid_members
+                    ],
+                    "projection_fds": projection_fds,
+                    "rejected_projection_fds": rejected_fds,
+                    "projection_sdims": [
+                        item["Sdim"] for item in band_maps
+                    ],
+                    "Z_fds": [item["Z_fd"] for item in band_maps],
+                    "tau_grid": tau_grid,
+                    "theta_grid": theta_grid,
+                    "spectrum_db": spectrum_db,
+                    "file_name": file_name,
+                }
+            )
 
-        if not spectrum_dbs:
-            print("No Doppler-projected targets passed the ToF gate.")
-            return results
-
-        # MUSIC spectra must be accumulated in linear power, not in dB.
-        spectrum_linear_sum = np.sum(10.0 ** (np.stack(spectrum_dbs, axis=0) / 10.0), axis=0,)
-        spectrum_sum_db = 10.0 * np.log10(np.maximum(spectrum_linear_sum, 1e-12))
-        sum_file_name = f"{frame_idx:04d}_{fig_name}_sum.png"
-        Plot.plot_spectrum(
-            frame_idx,
-            theta_grid,
-            tau_grid,
-            spectrum_sum_db.T,
-            self.args,
-            title="Azimuth-ToF Sum of Doppler-projected Targets",
-            sdim=azi_tof.Sdim,
-            spectrum_axes=("azi", "tof"),
-            file_name=sum_file_name,
-        )
+        if not results:
+            print("No Doppler-projected target bands passed the ToF gate.")
         return results
 
 
@@ -843,7 +1021,7 @@ class Azi_ToF:
 
         Parameters
         ----------
-        CSI : array_like, shape (num_frames, ...)
+        CSI : ndarray, shape (num_frames, ...)
             Real-valued dynamic linear-power CSI (for example, after background
             subtraction).  This is not complex CSI reconstruction.
         target_fd : float
@@ -869,20 +1047,6 @@ class Azi_ToF:
         avg_frames = args.avg_frames
         fs = args.fs
 
-        csi = np.asarray(CSI)
-        if csi.ndim < 2:
-            raise ValueError(
-                "CSI must have time as its first axis and at least one channel axis"
-            )
-        if csi.shape[0] == 0:
-            raise ValueError("CSI must contain at least one frame")
-        if np.iscomplexobj(csi):
-            raise ValueError(
-                "CSI must be real dynamic linear power, not reconstructed complex CSI"
-            )
-        if not np.all(np.isfinite(csi)):
-            raise ValueError("CSI must contain only finite values")
-
         target_fd = float(target_fd)
         fs = float(fs)
         avg_frames = int(avg_frames)
@@ -893,11 +1057,14 @@ class Azi_ToF:
         if avg_frames <= 0:
             raise ValueError(f"avg_frames must be positive, got {avg_frames}")
 
-        total_frames = csi.shape[0]
+        total_frames = CSI.shape[0]
         context_len = min(avg_frames, total_frames)
         #frame_idx = int(np.clip(frame_idx, 0, total_frames - 1))
         start = int(np.clip(frame_idx - context_len // 2, 0, total_frames - context_len))
         end = start + context_len
+        segment = CSI[start:end]
+        if not np.all(np.isfinite(segment)):
+            raise ValueError("CSI projection segment must contain only finite values")
 
         if window == "hann":
             # np.hanning(2) is all zeros, so use equal weights for tiny contexts.
@@ -908,6 +1075,9 @@ class Azi_ToF:
             )
         elif window == "rect":
             weights = np.ones(context_len)
+
+        elif window == "weight":
+            weights = weight_generation.weight_gen(target_fd)
         else:
             raise ValueError(f"window must be 'hann' or 'rect', got {window!r}")
 
@@ -915,7 +1085,7 @@ class Azi_ToF:
         # projection centre changes.  target_fd keeps its sign here.
         times_s = np.arange(start, end, dtype=float) / fs
         demodulator = weights * np.exp(-1j * 2.0 * np.pi * target_fd * times_s)
-        Z_fd = np.tensordot(demodulator, csi[start:end], axes=(0, 0))
+        Z_fd = np.tensordot(demodulator, segment, axes=(0, 0))
 
         if normalize:
             Z_fd = Z_fd / np.sum(weights)
@@ -1076,13 +1246,28 @@ class ToF_Dop:
                 row += 1
         return A
 
-    def cal_spectrum(self, Rxx, return_sdim=False):
+    def cal_spectrum(
+        self,
+        Rxx,
+        return_sdim=False,
+        sdim_attr=None,
+        energy_ratio_attr=None,
+        label="ToF-Doppler",
+    ):
         eig_val, eig_vec = np.linalg.eigh(Rxx)
         idx_order = eig_val.argsort()[::-1]
         eig_val, eig_vec = eig_val[idx_order], eig_vec[:, idx_order]
 
         # Signal subspace projection, same convention as XMUSIC_ToF_Dop/Guan.
-        if self.Sdim is None:
+        if sdim_attr is not None or energy_ratio_attr is not None:
+            Sdim = resolve_Sdim(
+                self.args,
+                eig_val,
+                label=label,
+                sdim_attr=sdim_attr or "ToF_Dop_Sdim",
+                energy_ratio_attr=energy_ratio_attr or "Sdim_energy_ratio",
+            )
+        elif self.Sdim is None:
             Sdim = resolve_Sdim(self.args,eig_val)
         else:
             Sdim = int(np.clip(self.Sdim, 1, Rxx.shape[0] - 1))
@@ -1111,9 +1296,7 @@ class ToF_Dop:
 
     def gen_spectrum(self, CSI, frame_idx, x_axis="doppler", y_axis="tof", plot=True):
         Rxx = self.Rxx_smooth(CSI, frame_idx)
-        tau_grid, fd_grid, P_tof_dop, Sdim = self.cal_spectrum(
-            Rxx, return_sdim=True
-        )
+        tau_grid, fd_grid, P_tof_dop, Sdim = self.cal_spectrum(Rxx, return_sdim=True)
 
         if not plot:
             return tau_grid, fd_grid, P_tof_dop
@@ -1129,9 +1312,11 @@ class ToF_Dop:
                 spectrum_axes=(x_axis, y_axis),
             )
 
-    def estimate_target_tof_doppler(self, CSI, frame_idx):
-        Rxx = self.Rxx_smooth(CSI, frame_idx)
-        tau_grid, fd_grid, P_tof_dop = self.cal_spectrum(Rxx)
+    def estimate_target_tof_doppler(self, CSI, frame_idx, use_beamforming=True):
+        if use_beamforming:
+            tau_grid, fd_grid, P_tof_dop = self.return_spectrum_Azi_beamforming_spectrum(CSI, frame_idx)
+        else:
+            tau_grid, fd_grid, P_tof_dop = self.gen_spectrum(CSI, frame_idx, plot=False)
         detected_targets= cfar_2D(
             P_tof_dop,
             tau_grid,
@@ -1144,7 +1329,7 @@ class ToF_Dop:
         )
         return detected_targets
 
-    def gen_spectrum_Azi_beamforming(self, CSI, frame_idx):
+    def gen_spectrum_Azi_beamforming_spectrum(self, CSI, frame_idx):
         """Print the strongest azimuth in the Azi-ToF MUSIC spectrum."""
 
         """
@@ -1154,14 +1339,12 @@ class ToF_Dop:
         iter = 0
         azi_tof = Azi_ToF(self.args)
         Rxx = azi_tof.Rxx_smooth(CSI, frame_idx)
-        tau_grid, theta_grid, P_azi_tof, Sdim = azi_tof.cal_spectrum(
-            Rxx,
-            return_sdim=True,
-        )
+        tau_grid, theta_grid, P_azi_tof, Sdim = azi_tof.cal_spectrum(Rxx, return_sdim=True)
         P_azi_tof_db = 10.0 * np.log10(np.maximum(P_azi_tof, 1e-12))
         #idx_theta, idx_tau = np.unravel_index(np.argmax(P_azi_tof),P_azi_tof.shape,)
         #max_theta = float(theta_grid[idx_theta])
         #max_tau = float(tau_grid[idx_tau])
+        """
         Plot.plot_spectrum(
             frame_idx,
             theta_grid,
@@ -1173,6 +1356,7 @@ class ToF_Dop:
             spectrum_axes=("azi", "tof"),
             file_name=f"{frame_idx:04d}-Iter{iter}.png"
             )
+        """
 
         tof_dop = ToF_Dop(self.args)
         Rxx = tof_dop.Rxx_smooth(CSI, frame_idx)
@@ -1199,7 +1383,13 @@ class ToF_Dop:
         CSI_bf = self.beamform_azimuth(CSI, P_azi_tof)
         beam_theta = self.last_beamform_theta
         Rxx_bf = self.Rxx_smooth(CSI_bf, frame_idx)
-        tau_grid, fd_grid, P_tof_dop_bf, Sdim = self.cal_spectrum(Rxx_bf, return_sdim=True,)
+        tau_grid, fd_grid, P_tof_dop_bf, Sdim = self.cal_spectrum(
+            Rxx_bf,
+            return_sdim=True,
+            sdim_attr="Beamformed_ToF_Dop_Sdim",
+            energy_ratio_attr="Beamformed_ToF_Dop_Sdim_ratio",
+            label="Beamformed ToF-Doppler",
+        )
         P_tof_dop_db = 10.0 * np.log10(np.maximum(P_tof_dop_bf, 1e-12))
         Plot.plot_spectrum(
             frame_idx,
@@ -1213,7 +1403,74 @@ class ToF_Dop:
             file_name = f"{frame_idx:04d}-Iter{iter}.png"
         )
 
-        r"""
+        # Plot the 1-D array response of the selected azimuth beam.
+        w = self.steering_vector.steering_vector_AoA(
+            beam_theta, stream_win=self.num_Rx
+        )
+        w = w / np.linalg.norm(w)
+        theta_grid_lobe = np.arange(
+            self.args.theta_min, self.args.theta_max + 0.1, 0.1
+        )
+        pattern = np.array(
+            [
+                np.abs(
+                    np.vdot(
+                        w,
+                        self.steering_vector.steering_vector_AoA(
+                            theta, stream_win=self.num_Rx
+                        ),
+                    )
+                )
+                ** 2
+                for theta in theta_grid_lobe
+            ]
+        )
+        pattern_db = 10.0 * np.log10(np.maximum(pattern, 1e-12))
+        pattern_db = np.clip(pattern_db - np.max(pattern_db), -40.0, 0.0)
+
+        fig_lobe, ax_lobe = plt.subplots(
+            figsize=(8, 5), subplot_kw={"projection": "polar"}
+        )
+        theta_rad = np.deg2rad(theta_grid_lobe)
+        ax_lobe.plot(theta_rad, pattern_db, color="#1f77b4", linewidth=2.0)
+        ax_lobe.axvline(
+            np.deg2rad(beam_theta),
+            color="tab:red",
+            linestyle="--",
+            linewidth=1.2,
+        )
+        ax_lobe.set_theta_zero_location("W")
+        ax_lobe.set_theta_direction(-1)
+        ax_lobe.set_thetamin(0)
+        ax_lobe.set_thetamax(180)
+        ax_lobe.set_ylim(-40, 0)
+        ax_lobe.set_yticks([-40, -30, -20, -10, 0])
+        ax_lobe.set_yticklabels(["-40 dB", "-30", "-20", "-10", "0"])
+        ax_lobe.set_rlabel_position(0)
+        xticks_deg = [0, 30, 60, 90, 120, 150, 180]
+        ax_lobe.set_xticks(np.deg2rad(xticks_deg))
+        ax_lobe.set_xticklabels([f"{degree}°" for degree in xticks_deg])
+        ax_lobe.set_title(
+            f"Azimuth Beam Lobe @ frame {frame_idx} "
+            f"(beam {beam_theta:.2f}°)",
+            pad=20,
+        )
+        ax_lobe.grid(True, linewidth=0.8, alpha=0.6)
+        fig_lobe.tight_layout()
+
+        pics_dir = getattr(self.args, "pics_dir", None)
+        if pics_dir is not None:
+            lobe_save_dir = os.path.join(pics_dir, "Beamform_Lobe")
+            os.makedirs(lobe_save_dir, exist_ok=True)
+            save_path = os.path.join(
+                lobe_save_dir,
+                f"{frame_idx:04d}_Azimuth_Lobe_Polar.png",
+            )
+            fig_lobe.savefig(save_path, dpi=300, bbox_inches="tight")
+            print(f"Saved Polar Beam Lobe to {save_path}")
+        plt.close(fig_lobe)
+
+        """
         目前這種「累積 hard rank-1 projection」繼續 iteration 幾乎沒有意義。
         你的兩個 projection 都具有冪等性：
 
@@ -1252,6 +1509,124 @@ class ToF_Dop:
             )
         """
 
+
+    def return_spectrum_Azi_beamforming_spectrum(self, CSI, frame_idx):
+        """Print the strongest azimuth in the Azi-ToF MUSIC spectrum."""
+
+        """
+        Iteration #0
+        Azi-Tof spectrum & ToF-Doppler spectrum
+        """
+        iter = 0
+        azi_tof = Azi_ToF(self.args)
+        Rxx = azi_tof.Rxx_smooth(CSI, frame_idx)
+        tau_grid, theta_grid, P_azi_tof, Sdim = azi_tof.cal_spectrum(Rxx,return_sdim=True)
+        P_azi_tof_db = 10.0 * np.log10(np.maximum(P_azi_tof, 1e-12))
+        #idx_theta, idx_tau = np.unravel_index(np.argmax(P_azi_tof),P_azi_tof.shape,)
+        #max_theta = float(theta_grid[idx_theta])
+        #max_tau = float(tau_grid[idx_tau])
+        """
+        Plot.plot_spectrum(
+            frame_idx,
+            theta_grid,
+            tau_grid,
+            P_azi_tof_db.T,
+            self.args,
+            title=f"Azi-ToF iter {iter}",
+            sdim=Sdim,
+            spectrum_axes=("azi", "tof"),
+            file_name=f"{frame_idx:04d}-Iter{iter}.png"
+            )
+        """
+
+        tof_dop = ToF_Dop(self.args)
+        Rxx = tof_dop.Rxx_smooth(CSI, frame_idx)
+        tau_grid, fd_grid, P_tof_dop, Sdim = self.cal_spectrum(Rxx, return_sdim=True)
+
+        """
+        Plot.plot_spectrum(
+            frame_idx,
+            fd_grid,
+            tau_grid,
+            P_tof_dop_db,
+            self.args,
+            title=f"ToF-Doppler iter {iter}",
+            sdim=Sdim,
+            spectrum_axes=("doppler", "tof"),
+            file_name=f"{frame_idx:04d}-Iter{iter}.png"
+        )
+        """
+        """
+        Iteration #1
+        Beamformed ToF-Doppler spectrum (Azimuth beamforming)
+        Beamformed Azi-ToF spectrum (ToF beamforming)
+        """
+        iter += 1
+
+        CSI_bf = self.beamform_azimuth(CSI, P_azi_tof)
+        beam_theta = self.last_beamform_theta
+        Rxx_bf = self.Rxx_smooth(CSI_bf, frame_idx)
+        tau_grid, fd_grid, P_tof_dop_bf, Sdim = self.cal_spectrum(
+            Rxx_bf,
+            return_sdim=True,
+            sdim_attr="Beamformed_ToF_Dop_Sdim",
+            energy_ratio_attr="Beamformed_ToF_Dop_Sdim_ratio",
+            label="Beamformed ToF-Doppler",
+        )
+        #P_tof_dop_db = 10.0 * np.log10(np.maximum(P_tof_dop_bf, 1e-12))
+        """
+        Plot.plot_spectrum(
+            frame_idx,
+            fd_grid,
+            tau_grid,
+            P_tof_dop_db,
+            self.args,
+            title=f"ToF-Doppler iter {iter} Beamformed {beam_theta:.2f} deg",
+            sdim=Sdim,
+            spectrum_axes=("doppler", "tof"),
+            file_name = f"{frame_idx:04d}-Iter{iter}.png"
+        )
+        """
+
+        """
+        目前這種「累積 hard rank-1 projection」繼續 iteration 幾乎沒有意義。
+        你的兩個 projection 都具有冪等性：
+
+        P_\theta^2=P_\theta,\qquad P_\tau^2=P_\tau
+
+        目前流程相當於： X_1=P_\theta X
+
+        接著： X_2=P_\theta X P_\tau
+
+        再次使用相同方向與 ToF：
+        P_\theta X_2P_\tau= P_\theta^2XP_\tau^2= P_\theta XP_\tau= X_2
+
+        所以第一次同時套用 Azimuth 與 ToF projection 後，資料已被壓進：
+        operatorname{span}(a_\theta)\otimes\operatorname{span}(a_\tau)
+
+        Azi–ToF map 變成一個點，是 projection 強制產生的結果，不代表解析度真的提高。
+        先前數值也顯示 Iter1 covariance 第一特徵值占比為 1.0，確實已經是 rank 1。
+
+        CSI_bf = self.beamform_tof(CSI_bf, P_tof_dop_bf)
+        Rxx = azi_tof.Rxx_smooth(CSI_bf, frame_idx)
+        tau_grid, theta_grid, P_azi_tof, Sdim = azi_tof.cal_spectrum(Rxx, return_sdim=True,)
+        P_azi_tof_db = 10.0 * np.log10(np.maximum(P_azi_tof, 1e-12))
+        #idx_theta, idx_tau = np.unravel_index(np.argmax(P_azi_tof),P_azi_tof.shape,)
+        #max_theta = float(theta_grid[idx_theta])
+        #max_tau = float(tau_grid[idx_tau])
+        Plot.plot_spectrum(
+            frame_idx,
+            theta_grid,
+            tau_grid,
+            P_azi_tof_db.T,
+            self.args,
+            title=f"Azi-ToF iter {iter}",
+            sdim=Sdim,
+            spectrum_axes=("azi", "tof"),
+            file_name=f"{frame_idx:04d}-Iter{iter}.png"
+            )
+        """
+        return tau_grid, fd_grid, P_tof_dop_bf
 
 
 

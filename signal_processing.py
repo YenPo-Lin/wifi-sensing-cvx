@@ -2,14 +2,16 @@ import numpy as np
 import pre_processing as pp
 import MUSIC
 import time
+import point_cloud
 
 
 
 
 def signal_processing(raw_CSI, args):
 
-    doppler = MUSIC.Doppler(args)
+    #doppler = MUSIC.Doppler(args)
     #doppler.gen_conti_spectrum(raw_CSI, sc_select=True)
+
 
     start_preprocessing = time.time()
     #CSI = pp.self_sanitize(raw_CSI) # = np.abs(raw_CSI) # remove NaN and Inf
@@ -60,14 +62,20 @@ def signal_processing(raw_CSI, args):
     #targets = [result["target"] for result in roi_results]
 
     #tof_dop.gen_spectrum(CSI, frame_idx)
-    #azi_tof.gen_spectrum(CSI, frame_idx)
-    tof_dop.gen_spectrum_Azi_beamforming(CSI, frame_idx)
+    azi_tof.gen_spectrum(CSI, frame_idx)
+
+
+    tof_dop.gen_spectrum_Azi_beamforming_spectrum(CSI, frame_idx)
     #azi_dop.gen_spectrum(CSI, frame_idx)
-    #_ = azi_tof.gen_Doppler_projection_spectrum(CSI, frame_idx, fig_name = "Project_tg")
+    results = azi_tof.gen_Doppler_projection_spectrum(CSI, frame_idx, fd_neighbor=0.5, doppler_step=0.25)
+    point_cloud_generator = point_cloud.PointCloud_Generator(args)
+    #points = point_cloud_generator.generate_point_cloud(results)
+    #print(f"Azimuth-ToF-Doppler point cloud shape: {points.shape}")
 
 
     # 2D Azi-ToF spectrum
-    for frame_idx in range(600, 700, 20):
+    for frame_idx in range(1500, 2000, 50):
+        #tof_dop.gen_spectrum_Azi_beamforming_spectrum(CSI, frame_idx)
         #tof_dop.gen_spectrum(CSI, frame_idx)
         #azi_tof.gen_spectrum(CSI, frame_idx)
         #azi_dop.gen_spectrum(CSI, frame_idx)
@@ -78,3 +86,4 @@ def signal_processing(raw_CSI, args):
         #azi_dop.gen_spectrum(CSI, frame_idx)
     #tof_dop.gen_spectrum(CSI, frame_idx)
     #_ = azi_tof.gen_Doppler_projection_spectrum(CSI, frame_idx, fig_name = "Project_tg")
+    #return points

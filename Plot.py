@@ -387,3 +387,67 @@ def plot_conti_spectrum(time_s, fd_grid, spectrum_db, args, file_name="continuou
         plt.close(fig)
         print(f"Saved: {save_path}")
     return axes
+
+
+
+def plot_clean_spectrum(
+    frame_idx,
+    x_values,
+    y_values,
+    P_music,
+    args,
+    ax=None,
+    file_name=None,
+):
+    """Save a heatmap-only spectrum with no axes, padding, or white border."""
+    x_values = np.asarray(x_values)
+    y_values = np.asarray(y_values)
+    P_music = np.asarray(P_music)
+    if x_values.ndim != 1 or y_values.ndim != 1:
+        raise ValueError("x_values and y_values must be 1-D")
+    expected_shape = (y_values.size, x_values.size)
+    if P_music.shape != expected_shape:
+        raise ValueError(
+            f"Expected spectrum shape {expected_shape} for (y, x), "
+            f"got {P_music.shape}."
+        )
+    if not np.all(np.isfinite(P_music)):
+        raise ValueError("P_music must contain only finite values")
+
+    if ax is None:
+        fig = plt.figure(frameon=False)
+        ax = fig.add_axes([0.0, 0.0, 1.0, 1.0])
+    else:
+        fig = ax.figure
+
+    ax.pcolormesh(
+        x_values,
+        y_values,
+        P_music,
+        cmap="jet",
+        shading="auto",
+        linewidth=0,
+        antialiased=False,
+        rasterized=True,
+    )
+    ax.set_axis_off()
+    ax.set_position([0.0, 0.0, 1.0, 1.0])
+    ax.margins(0)
+    fig.subplots_adjust(left=0.0, right=1.0, bottom=0.0, top=1.0)
+
+    # --- save figures ---
+    if args.pics_dir is not None:
+        save_dir = os.path.join(args.pics_dir, "Azi_ToF_clean")
+        os.makedirs(save_dir, exist_ok=True)
+        file_name = file_name or f"{frame_idx:04d}_clean.png"
+        save_path = os.path.join(save_dir, file_name)
+        fig.savefig(
+            save_path,
+            dpi=100,
+            bbox_inches=None,
+            pad_inches=0,
+        )
+        plt.close(fig)
+        print(f"Saved: {save_path}")
+
+    return ax
