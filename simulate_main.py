@@ -1,5 +1,5 @@
 """Compare magnitude-only Azi-ToF and Doppler-gated Azi-ToF heatmaps."""
-
+from weight_generation import weight_test
 
 import matplotlib
 import argparse
@@ -31,7 +31,7 @@ def simulation_args():
     # ---- MUSIC settings ----
     parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'dwt', 'pca'])
     # plotted frame
-    parser.add_argument('--plot_frame', type=int, default=50)
+    parser.add_argument('--frame_idx', type=int, default=50)
     # MUSIC signal dimension
     parser.add_argument('--Sdim', type=int, default=None)
     parser.add_argument('--Sdim_energy_ratio', type=float, default=0.25)
@@ -108,8 +108,8 @@ def simulation_args():
 def main():
     args = simulation_args()
     targets = targets_csi_config()
-    args.target_gt = target_gt_at_frame(args, targets, args.plot_frame)
-    plot_target_trajectories(args, targets, args.plot_frame)
+    args.target_gt = target_gt_at_frame(args, targets, args.frame_idx)
+    plot_target_trajectories(args, targets, args.frame_idx)
 
     csi_amplitude = simulate_csi(
         args,
@@ -122,15 +122,17 @@ def main():
         seed=7,
     )
 
-    CSI = csi_amplitude **2  # linear CSI power used by this research
+    CSI = csi_amplitude  # linear CSI power used by this research
+
+    #weight_test(CSI, args)
     background = pp.MA(CSI, args.fs * 0.5)
 
     if args.preprocess == "ma":
         #CSI = (CSI - background) # Original Version
-        CSI = (CSI - background) / (background + 1e-8) # Normalized dynamic residual
+        CSI = (CSI - background)# / (background + 1e-8) # Normalized dynamic residual
 
-    frame_idx = args.plot_frame
-
+    frame_idx = args.frame_idx
+    """
     # 3D Azi-ToF-Doppler MUSIC and its Doppler-RoI Azi-ToF maps.
     azi_tof_dop = MUSIC.Azi_ToF_Dop(args)
     _ = azi_tof_dop.gen_spectrum(CSI, frame_idx, method="sum", fig_name="3D_MUSIC_sum",)
@@ -154,6 +156,11 @@ def main():
     #for target, projected_result in zip(detected_targets, projected_results):
     #    target["projected_azi_tof"] = projected_result
     #return detected_targets
+    """
+    azi_tof = MUSIC.Azi_ToF(args)
+    tof_dop = MUSIC.ToF_Dop(args)
+    tof_dop.gen_spectrum_Azi_beamforming_spectrum(CSI, frame_idx)
+    results = azi_tof.gen_Doppler_projection_spectrum(CSI, frame_idx, fd_neighbor=0.5, doppler_step=0.25)
 
 
 

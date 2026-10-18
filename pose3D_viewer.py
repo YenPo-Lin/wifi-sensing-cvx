@@ -12,7 +12,7 @@ import matplotlib.animation as animation
 from pathlib import Path
 
 PIPELINE_ROOT = Path(__file__).resolve().parent.parent
-DEFAULT_POSE_PATH = Path('/Users/YPL/Downloads/20261006-205740_test4_triangulated.npy')
+DEFAULT_POSE_PATH = Path('/Users/YPL/Documents/Experiments/Exp-code/1008pose/pose3D_20261008-205249_fb_swing2.npy')
 
 NUM_KEYPOINTS = 20
 
@@ -270,7 +270,7 @@ if __name__ == "__main__":
 	parser.add_argument('--data-root', default=str(PIPELINE_ROOT / 'data'))
 	parser.add_argument('--intermediates-root', default=str(PIPELINE_ROOT.parent / 'CSI_files_2026' / 'intermediates'))
 	parser.add_argument('--exp-name', default = 'hand')
-	parser.add_argument('--max_fps', type = int, default = 30)
+	parser.add_argument('--max_fps', type = int, default = 15)
 	parser.add_argument('--limit_type', default='responsive', choices=['responsive', 'fixed'])
 
 	# parse parser

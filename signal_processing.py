@@ -35,11 +35,9 @@ def signal_processing(raw_CSI, args):
     end_preprocessing = time.time()
     print(f"Preprocessing Method: {args.preprocess} | Time: {end_preprocessing - start_preprocessing:.2f}s")
 
-    #WIDFS.plot_power_heatmap(CSI)
-    #WIDFS.dfs_channel_weighting(raw_CSI, target_fd=0, args=args)
-
 
     azi_tof = MUSIC.Azi_ToF(args)
+    dop_proj_azi_tof = MUSIC.DopplerProject_Azi_ToF(args)
     tof_dop = MUSIC.ToF_Dop(args)
     azi_dop = MUSIC.Azi_Dop(args)
     azi_tof_dop = MUSIC.Azi_ToF_Dop(args)
@@ -47,43 +45,37 @@ def signal_processing(raw_CSI, args):
 
     frame_idx = args.frame_idx
 
-    print(f"Processing Frame {frame_idx}... ")
-
-    #Doppler_spec.gen_spectrogram(CSI, args)
-    #Doppler_spec.gen_spectrum(CSI, frame_idx)
-    # Use all TX channels when enabling either ToF-Doppler branch.
-    #Doppler_spec.gen_spectrum_from_ToF_Doppler(CSI, frame_idx, args, method="max", tx=None)
-    #Doppler_spec.gen_spectrum_from_ToF_Doppler_Rx_diff(CSI, frame_idx, args, method="max")
     
-    # 3D spectrum
-    #_ = azi_tof_dop.gen_spectrum(CSI, frame_idx, method="sum", fig_name="3D_MUSIC",)
-    # 3D spectrum with Doppler RoI
-    #roi_results = azi_tof_dop.gen_Doppler_RoI_specturm(CSI, frame_idx, fd_range=2, fig_name="3D_MUSIC_RoI")
-    #targets = [result["target"] for result in roi_results]
 
-    #tof_dop.gen_spectrum(CSI, frame_idx)
+
+    tof_dop.gen_spectrum(CSI, frame_idx)
     azi_tof.gen_spectrum(CSI, frame_idx)
+    dop_proj_azi_tof.gen_beamform_ToF_Dop(CSI, frame_idx, file_name="beamform")
+    #azi_tof_dop.gen_spectrum(CSI, frame_idx)
 
-
-    tof_dop.gen_spectrum_Azi_beamforming_spectrum(CSI, frame_idx)
-    #azi_dop.gen_spectrum(CSI, frame_idx)
-    results = azi_tof.gen_Doppler_projection_spectrum(CSI, frame_idx, fd_neighbor=0.5, doppler_step=0.25)
+    results = dop_proj_azi_tof.gen_Doppler_projected_spectrum(CSI, frame_idx, fd_neighbor=0, fd_step=0.1)
     point_cloud_generator = point_cloud.PointCloud_Generator(args)
     #points = point_cloud_generator.generate_point_cloud(results)
-    #print(f"Azimuth-ToF-Doppler point cloud shape: {points.shape}")
+
+
+
+    
+
 
 
     # 2D Azi-ToF spectrum
-    for frame_idx in range(1500, 2000, 50):
-        #tof_dop.gen_spectrum_Azi_beamforming_spectrum(CSI, frame_idx)
+    for frame_idx in range(1000, 2500, 50):
         #tof_dop.gen_spectrum(CSI, frame_idx)
+
         #azi_tof.gen_spectrum(CSI, frame_idx)
+
         #azi_dop.gen_spectrum(CSI, frame_idx)
-        #_ = azi_tof.gen_Doppler_projection_spectrum(CSI, frame_idx, fig_name = "Project_tg")
+        # 3D spectrum
+        #_ = azi_tof_dop.gen_spectrum(CSI, frame_idx, method="sum", fig_name="3D_MUSIC",)
+
+        # 3D spectrum with Doppler RoI
+        #roi_results = azi_tof_dop.gen_Doppler_RoI_specturm(CSI, frame_idx, fd_range=2, fig_name="3D_MUSIC_RoI")
+        #targets = [result["target"] for result in roi_results]
+
         pass
 
-    #
-        #azi_dop.gen_spectrum(CSI, frame_idx)
-    #tof_dop.gen_spectrum(CSI, frame_idx)
-    #_ = azi_tof.gen_Doppler_projection_spectrum(CSI, frame_idx, fig_name = "Project_tg")
-    #return points

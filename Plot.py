@@ -19,35 +19,35 @@ def _axis_values_and_label(axis_name, values, args):
         return values, "Doppler frequency (Hz)"
     raise ValueError(f"Unsupported axis name: {axis_name}")
 
-def _plot_target_gt(ax, target_gt, x_axis, y_axis, args):
-    """Plot ``[azimuth, ToF, Doppler]`` ground-truth rows on selected axes."""
-    target_gt = getattr(args, "target_gt", None) if target_gt is None else target_gt
-    if target_gt is None:
+def _plot_target_gt(ax, target_label, x_axis, y_axis, args):
+    """Plot (ToF, Doppler) target coordinates as black crosses."""
+    target_label = getattr(args, "target_label", None) if target_label is None else target_label
+    if target_label is None:
         return
 
-    target_gt = np.asarray(target_gt, dtype=float)
-    if target_gt.size == 0:
+    target_label = np.asarray(target_label, dtype=float)
+    if target_label.size == 0:
         return
-    target_gt = np.atleast_2d(target_gt)
-    if target_gt.shape[1] != 3:
+    target_label = np.atleast_2d(target_label)
+    if target_label.shape[1] != 2 or {x_axis, y_axis} != {"tof", "doppler"}:
         raise ValueError(
-            "target_gt must have shape (num_targets, 3) with rows "
-            "[azimuth_deg, tof_s, doppler_hz]."
+            "target_label must contain (tof_s, doppler_hz) rows "
+            "on ToF-Doppler axes."
         )
 
-    column_by_axis = {"azi": 0, "tof": 1, "doppler": 2}
+    column_by_axis = {"tof": 0, "doppler": 1}
     x_gt, _ = _axis_values_and_label(
-        x_axis, target_gt[:, column_by_axis[x_axis]], args
+        x_axis, target_label[:, column_by_axis[x_axis]], args
     )
     y_gt, _ = _axis_values_and_label(
-        y_axis, target_gt[:, column_by_axis[y_axis]], args
+        y_axis, target_label[:, column_by_axis[y_axis]], args
     )
     ax.scatter(
         x_gt,
         y_gt,
         marker="x",
         s=50,
-        color="white",
+        color="black",
         linewidths=1.5,
         zorder=3,
     )
@@ -232,17 +232,10 @@ def plot_spectrum(
     sdim=None,
     ax=None,
     save=True,
-    show_colorbar=None,
-    target_gt=None,
+    target_label=None,
     file_name=None,
 ):
-    """Plot a (y, x) spectrum; ``spectrum_axes`` names the displayed (X, Y)."""
-    if (
-        spectrum_axes is None
-        or len(spectrum_axes) != 2
-        or spectrum_axes[0] == spectrum_axes[1]
-    ):
-        raise ValueError("spectrum_axes=(x_axis, y_axis) is required.")
+
 
     x_axis, y_axis = spectrum_axes
     x_values = np.asarray(x_values)
@@ -260,30 +253,18 @@ def plot_spectrum(
 
     if ax is None:
         _, ax = plt.subplots()
-    mesh = ax.pcolormesh(
-        x_values,
-        y_values,
-        P_music,
-        cmap='jet',
-        shading='auto',
-    )
-    if show_colorbar is None:
-        show_colorbar = bool(args.colorbar)
-    if show_colorbar:
-        colorbar = ax.figure.colorbar(mesh, ax=ax)
-        colorbar.outline.set_visible(False)
-        colorbar.set_label('Power (dB)', rotation=270, labelpad=15)
+    mesh = ax.pcolormesh(x_values, y_values, P_music, cmap='jet', shading='auto')
 
-    _plot_target_gt(ax, target_gt, x_axis, y_axis, args)
+    colorbar = ax.figure.colorbar(mesh, ax=ax)
+    colorbar.outline.set_visible(False)
+    colorbar.set_label('Power (dB)', rotation=270, labelpad=15)
 
-    # Remove the default black frame around the heatmap. Cell edges are also
-    # disabled above to avoid dark seams when the raster image is rescaled.
+    _plot_target_gt(ax, target_label, x_axis, y_axis, args)
+
+
     for spine in ax.spines.values():
         spine.set_visible(False)
 
-    # 畫出網格線 (選擇性開啟，用於觀察 Grid Refinement 的分佈)
-    #ax.set_xticks(x_values, minor=True)
-    #ax.set_yticks(y_values, minor=True)
     ax.grid(which='major', color='w', linestyle='-', linewidth=0.2, alpha=0.5)
 
     ax.set_xlabel(x_label)
@@ -291,7 +272,7 @@ def plot_spectrum(
     full_title = title + ' @ frame ' + str(frame_idx)
     if sdim is not None:
         full_title += ' Sdim ' + str(int(sdim))
-    ax.set_title(full_title, fontsize=8)
+    ax.set_title(full_title, fontsize=10)
 
     # --- save figures ---
     if save and args.pics_dir is not None:
@@ -300,12 +281,12 @@ def plot_spectrum(
             frozenset(("azi", "doppler")): "Azi_Doppler",
             frozenset(("tof", "doppler")): "ToF_Doppler",
         }
-        save_dir = os.path.join(
-            args.pics_dir,
-            output_folder_by_axes[frozenset(spectrum_axes)],
-        )
+        save_dir = os.path.join(args.pics_dir, output_folder_by_axes[frozenset(spectrum_axes)])
         os.makedirs(save_dir, exist_ok=True)
-        file_name = file_name or f"{frame_idx:04d}.png"
+        if file_name is None:
+            file_name = f"{frame_idx:04d}.png"
+        else:
+            file_name = f"{frame_idx:04d}_{file_name}.png"
         save_path = os.path.join(save_dir, file_name)
         ax.figure.savefig(save_path, dpi=100)
         plt.close(ax.figure)
@@ -387,7 +368,6 @@ def plot_conti_spectrum(time_s, fd_grid, spectrum_db, args, file_name="continuou
         plt.close(fig)
         print(f"Saved: {save_path}")
     return axes
-
 
 
 def plot_clean_spectrum(

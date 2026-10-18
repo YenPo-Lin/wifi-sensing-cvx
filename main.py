@@ -3,6 +3,7 @@ import time
 import argparse
 import numpy as np
 from signal_processing import signal_processing
+from weight_generation import weight_test
 
 
 
@@ -10,7 +11,7 @@ def create_parser():
     parser = argparse.ArgumentParser()
 
     # npz 文件路徑
-    file_path = "/Users/YPL/Documents/NPZ_files/20260922-150619_FB_swing.npz"
+    file_path = "/Users/YPL/Documents/Experiments/Exp-code/20261016-181428_swing_right.npz"
     parser.add_argument('--csi_file', type=str, default=file_path)
     
     # ---- CSI parameters ----
@@ -21,17 +22,18 @@ def create_parser():
     # ---- MUSIC settings ----
     parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'dwt', 'pca'])
     # plotted frame
-    parser.add_argument('--frame_idx', type=int, default=1380)
+    parser.add_argument('--frame_idx', type=int, default=2150)
     # MUSIC signal dimension
     parser.add_argument('--Dop_Sdim', type=int, default=None)
-    parser.add_argument('--Azi_ToF_Sdim', type=int, default=7)
-    parser.add_argument('--Projected_Azi_ToF_Sdim_ratio', type=float, default=0.3)
-    parser.add_argument('--ToF_Dop_Sdim', type=int, default=None)
-    parser.add_argument('--Beamformed_ToF_Dop_Sdim_ratio', type=float, default=0.58)
+    parser.add_argument('--Azi_ToF_Sdim', type=int, default=None)
+    parser.add_argument('--Projected_Azi_ToF_Sdim_ratio', type=float, default=0.33)
+    parser.add_argument('--ToF_Dop_Sdim', type=int, default=5)
+    parser.add_argument('--Beamformed_ToF_Dop_Sdim_ratio', type=float, default=0.2)
     parser.add_argument('--Azi_Dop_Sdim', type=int, default=None)
     parser.add_argument('--Azi_ToF_Dop_Sdim', type=int, default=None)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.58)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.5)
     parser.add_argument('--avg_frames', type=int, default=100)
+    
     parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
     parser.add_argument('--stream_win', type=int, default=5) ## Azimuth Steering Vector length = stream_win
@@ -54,12 +56,12 @@ def create_parser():
     # Azimuth grid
     parser.add_argument('--theta_min', type=float, default= 0)
     parser.add_argument('--theta_max', type=float, default= 180)
-    parser.add_argument('--theta_step', type=int, default=2)
+    parser.add_argument('--theta_step', type=int, default=3)
     # Time of Flight grid
     parser.add_argument('--axis', type=str, default='m', choices=['ns', 'm'])
-    parser.add_argument('--tau_min', type=float, default=2e-9)
+    parser.add_argument('--tau_min', type=float, default=1e-9)
     parser.add_argument('--tau_max', type=float, default=15e-9)
-    parser.add_argument('--tau_step', type=float, default=2e-10)
+    parser.add_argument('--tau_step', type=float, default=3e-10)
     # Doppler grid
     parser.add_argument('--doppler_min', type=float, default=-30)
     parser.add_argument('--doppler_max', type=float, default=30)
@@ -95,7 +97,7 @@ def create_parser():
 
     # Doppler Projection settings
     parser.add_argument('--tof_gating', action=argparse.BooleanOptionalAction, default=True)
-    parser.add_argument('--tof_gate', type=float, default=6e-9)
+    parser.add_argument('--tof_gate', type=float, default=10e-9)
     
     # ---- 圖片保存路徑 ----
     parser.add_argument('--pics_dir', type=str, default=None)
@@ -104,7 +106,7 @@ def create_parser():
     parser.add_argument('--cfar_training_cells', type=int, default=1)
     parser.add_argument('--cfar_guard_cells', type=int, default=1)
     parser.add_argument('--cfar_threshold_factor', type=float, default=1.0)
-    parser.add_argument('--cfar_top_k', type=int, default=7)
+    parser.add_argument('--cfar_top_k', type=int, default=5)
     parser.add_argument('--cfar_min_peak_distance', type=int, default=1)
     parser.add_argument('--cfar_min_prominence_db', type=float, default=0.0)
     parser.add_argument('--fd_band', type=float, default=2.0)
