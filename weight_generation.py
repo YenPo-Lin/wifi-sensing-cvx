@@ -3,19 +3,23 @@ from scipy.optimize import minimize
 import pre_processing as pp
 
 
-def estimate_sinr_parameters(segment, candidate_fds, fs):
-    """Fit local amplitude sinusoids and return power and residual variance.
+def estimate_sinr_parameters(segment, candidate_fds, fs, *, times_s=None, return_offset=False):
+    """Fit a real dynamic amplitude or linear-power model at every channel.
 
-    ``segment`` has shape ``(time, ...)`` and contains real dynamic-amplitude
-    residuals. Powers are mean squared sinusoid amplitudes over its channels.
-    The residual variance includes unmodelled motion and preprocessing error;
-    it is an effective noise estimate for the simplified SINR model.
+    ``segment[n, ...] = offset + sum_p(C[p, ...] exp(j 2 pi f_p t_n)
+    + conj(C[p, ...]) exp(-j 2 pi f_p t_n)) + eta[n, ...]``.
+    Return complex ``C`` with shape ``(num_paths, *segment.shape[1:])`` and
+    residual noise variance with shape ``segment.shape[1:]``. Set
+    ``return_offset=True`` to also return the fitted per-channel DC term.
+    Each absolute Doppler may occur only once: a real signal cannot
+    distinguish +f/-f in this fit.
+    ``times_s`` must use the same time origin later passed to ``weight_gen``.
     """
     segment = np.asarray(segment)
     fds = np.asarray(candidate_fds, dtype=float)
     fs = float(fs)
-    if segment.ndim < 2 or segment.shape[0] == 0 or np.iscomplexobj(segment):
-        raise ValueError("segment must be nonempty real data with time on axis 0")
+    if segment.ndim < 1 or segment.shape[0] == 0 or np.iscomplexobj(segment):
+        raise ValueError("segment must be nonempty real amplitude or linear power with time on axis 0")
     if not np.all(np.isfinite(segment)):
         raise ValueError("segment must contain only finite values")
     if fds.ndim != 1 or fds.size == 0 or not np.all(np.isfinite(fds)):
@@ -24,11 +28,17 @@ def estimate_sinr_parameters(segment, candidate_fds, fs):
         raise ValueError("fs must be positive and finite")
 
     n = segment.shape[0]
+    if times_s is None:
+        times_s = np.arange(n, dtype=float) / fs
+    else:
+        times_s = np.asarray(times_s, dtype=float)
+        if times_s.shape != (n,) or not np.all(np.isfinite(times_s)):
+            raise ValueError("times_s must be a finite 1-D array of segment length")
     parameter_count = 1 + 2 * fds.size  # Per-channel intercept, cos, and sin.
     if n <= parameter_count:
         raise ValueError("segment is too short to estimate noise variance")
 
-    phase = 2.0 * np.pi * np.outer(np.arange(n) / fs, fds)
+    phase = 2.0 * np.pi * np.outer(times_s, fds)
     design = np.empty((n, parameter_count), dtype=float)
     design[:, 0] = 1.0
     design[:, 1::2] = np.cos(phase)
@@ -41,43 +51,45 @@ def estimate_sinr_parameters(segment, candidate_fds, fs):
             "(check duplicate or positive/negative mirror frequencies)"
         )
 
-    powers = np.mean(
-        coefficients[1::2] ** 2 + coefficients[2::2] ** 2, axis=1
-    )
+    # A cos(wt) + B sin(wt) = C exp(jwt) + C* exp(-jwt),
+    # so C = (A - j B) / 2; keep its phase for coherent interference.
+    path_coefficients = (coefficients[1::2] - 1j * coefficients[2::2]) / 2.0
     residual = channels - design @ coefficients
-    noise_variance = float(
-        np.sum(residual ** 2) /
-        (channels.shape[1] * (n - parameter_count))
+    noise_variance = np.sum(residual ** 2, axis=0) / (n - parameter_count)
+    result = (
+        path_coefficients.reshape((fds.size,) + segment.shape[1:]),
+        noise_variance.reshape(segment.shape[1:]),
     )
-    return powers, noise_variance
+    if return_offset:
+        return result + (coefficients[0].reshape(segment.shape[1:]),)
+    return result
 
-def weight_gen(target_fd, interferer_fds, interferer_powers, noise_variance, avg_frames, fs):
-    """Generate the nonnegative, target-specific SINR-optimal time window.
+def weight_gen(
+    target_fd, candidate_fds, path_coefficients, noise_variance, avg_frames, fs,
+    *, channel_weights=None, times_s=None, offset=None,
+):
+    """Return one shared, target-specific matched-Doppler SINR/QP window.
 
-    This solves the fixed-gain, matched-Doppler model in Research0916 (5).md.
-    ``interferer_fds`` may include both sidebands of each real-amplitude
-    interferer, with its squared amplitude in ``interferer_powers`` for each
-    sideband. The target's own negative-frequency mirror is still neglected
-    in the fixed-gain numerator. Powers and noise variance must be in the
-    amplitude domain; MUSIC/CFAR pseudo-spectrum values are not estimates.
+    Minimize the sum of channel interference-plus-noise powers, with
+    ``u >= 0`` and ``sum(u) = avg_frames``. Matched Doppler fixes each
+    matched target gain at ``C[q, ...]``. The target's negative
+    mirror and both branches of every other path remain coherent inside
+    ``|I_q|**2``; no phase-independence approximation is made.
 
-    Parameters
-    ----------
-    target_fd : float
-        Target Doppler frequency in Hz.
-    interferer_fds, interferer_powers : 1-D array_like, shape (num_interferers,)
-        Other Doppler frequencies in Hz and their nonnegative amplitude squares.
-    noise_variance : float
-        Nonnegative variance of the dynamic-amplitude noise per time sample.
-    avg_frames : int
-        Number of time samples in the projection window.
-    fs : float
-        Time-sample rate in Hz.
+    ``candidate_fds`` has shape ``(P,)`` and includes ``target_fd`` exactly
+    once. It contains one signed representative for each absolute Doppler.
+    ``path_coefficients`` has shape ``(P, ...)`` and holds complex
+    ``C[p, ...]`` from real dynamic CSI amplitude or linear power, not complex
+    CSI or averaged path powers. ``noise_variance`` and optional nonnegative
+    ``channel_weights`` are scalar or broadcastable to the channel shape
+    ``...``. Equal channel weights are used by default. ``times_s`` is an
+    optional length-``avg_frames`` time vector, with the same origin as C.
+    ``offset`` is an optional fitted real DC term; it is included in coherent
+    interference when the projected amplitude residual has a local offset.
+    The noise model assumes independent time samples at each channel.
 
-    Returns
-    -------
-    ndarray, shape (avg_frames,)
-        Real nonnegative weights whose sum is ``avg_frames``.
+    Returns a real array of shape ``(avg_frames,)`` with nonnegative entries
+    and sum ``avg_frames``, suitable for a single shared Doppler projection.
     """
     if (
         isinstance(avg_frames, (bool, np.bool_))
@@ -89,45 +101,88 @@ def weight_gen(target_fd, interferer_fds, interferer_powers, noise_variance, avg
 
     target_fd = float(target_fd)
     fs = float(fs)
-    noise_variance = float(noise_variance)
     if not np.isfinite(target_fd):
         raise ValueError("target_fd must be finite")
     if not np.isfinite(fs) or fs <= 0:
         raise ValueError("fs must be positive and finite")
-    if not np.isfinite(noise_variance) or noise_variance < 0:
-        raise ValueError("noise_variance must be nonnegative and finite")
+    fds = np.asarray(candidate_fds, dtype=float)
+    if fds.ndim != 1 or fds.size == 0 or not np.all(np.isfinite(fds)):
+        raise ValueError("candidate_fds must be a nonempty finite 1-D array")
+    matches = np.flatnonzero(np.isclose(fds, target_fd, rtol=1e-9, atol=1e-9))
+    if matches.size != 1:
+        raise ValueError("candidate_fds must contain target_fd exactly once")
+    mirrored_duplicates = np.isclose(
+        np.abs(fds[:, None]), np.abs(fds[None, :]), rtol=1e-9, atol=1e-9
+    )
+    if np.any(np.triu(mirrored_duplicates, k=1)):
+        raise ValueError("candidate_fds must have unique absolute Dopplers")
+    if abs(target_fd) < 1e-12:
+        raise ValueError("target_fd must be nonzero to separate its two branches")
 
-    fds = np.asarray(interferer_fds, dtype=float)
-    powers = np.asarray(interferer_powers, dtype=float)
-    if fds.ndim != 1 or powers.ndim != 1 or fds.shape != powers.shape:
-        raise ValueError("interferer_fds and interferer_powers must be equal-length 1-D arrays")
-    if not np.all(np.isfinite(fds)):
-        raise ValueError("interferer_fds must contain only finite values")
-    if not np.all(np.isfinite(powers)) or np.any(powers < 0):
-        raise ValueError("interferer_powers must be nonnegative and finite")
+    c = np.asarray(path_coefficients, dtype=complex)
+    if c.ndim < 1 or c.shape[0] != fds.size or not np.all(np.isfinite(c)):
+        raise ValueError("path_coefficients must be finite complex C with first axis matching candidate_fds")
+    if not np.any(np.abs(c[matches[0]]) > 0):
+        raise ValueError("target path coefficient must be nonzero in at least one channel")
+    channel_shape = c.shape[1:]
+    if offset is not None and np.iscomplexobj(offset):
+        raise ValueError("offset must be real")
+    try:
+        sigma2 = np.broadcast_to(np.asarray(noise_variance, dtype=float), channel_shape)
+        lambdas = np.broadcast_to(
+            np.asarray(1.0 if channel_weights is None else channel_weights, dtype=float),
+            channel_shape,
+        )
+        if offset is not None:
+            dc = np.broadcast_to(np.asarray(offset, dtype=float), channel_shape)
+    except ValueError as exc:
+        raise ValueError("noise_variance, channel_weights, and offset must match the channel shape") from exc
+    if not np.all(np.isfinite(sigma2)) or np.any(sigma2 < 0):
+        raise ValueError("noise_variance must be finite and nonnegative")
+    if not np.all(np.isfinite(lambdas)) or np.any(lambdas < 0) or not np.any(lambdas > 0):
+        raise ValueError("channel_weights must be finite, nonnegative, and not all zero")
+    if offset is not None and not np.all(np.isfinite(dc)):
+        raise ValueError("offset must be finite")
 
-    # With no effective interference, equal weights minimize the noise term.
-    if not np.any(powers > 0):
-        return np.ones(n, dtype=float)
+    if times_s is None:
+        times_s = np.arange(n, dtype=float) / fs
+    else:
+        times_s = np.asarray(times_s, dtype=float)
+        if times_s.shape != (n,) or not np.all(np.isfinite(times_s)):
+            raise ValueError("times_s must be a finite 1-D array of avg_frames length")
 
-    phase = (2.0 * np.pi / fs) * np.outer(fds - target_fd, np.arange(n))
-    cos_terms = np.cos(phase)
-    sin_terms = np.sin(phase)
-    r_q = (cos_terms.T * powers) @ cos_terms
-    r_q += (sin_terms.T * powers) @ sin_terms
-    r_q.flat[::n + 1] += 4.0 * noise_variance
+    # b[n, channel] is the entire coherent interference term before weighting.
+    # Only the matched target branch C_q exp(j 2 pi f_q t) is removed.
+    c_flat = c.reshape(fds.size, -1)
+    positive = np.exp(1j * 2.0 * np.pi * np.outer(times_s, fds - target_fd))
+    negative = np.exp(-1j * 2.0 * np.pi * np.outer(times_s, fds + target_fd))
+    b = positive @ c_flat + negative @ c_flat.conj()
+    b -= c_flat[matches[0]][None, :]
+    if offset is not None:
+        b += np.exp(-1j * 2.0 * np.pi * target_fd * times_s)[:, None] * dc.reshape(1, -1)
+
+    # For real u, |u.T b_j|^2 = u.T (Re(b_j)Re(b_j).T + Im(b_j)Im(b_j).T) u.
+    # The common N^-2 factor is irrelevant to the minimizer.
+    sqrt_lambda = np.sqrt(lambdas.reshape(-1))
+    b_re = b.real * sqrt_lambda[None, :]
+    b_im = b.imag * sqrt_lambda[None, :]
+    r_q = b_re @ b_re.T + b_im @ b_im.T
+    r_q.flat[::n + 1] += float(np.sum(lambdas * sigma2))
 
     ones = np.ones(n, dtype=float)
-    if noise_variance > 0:
+    if not np.any(r_q):
+        return ones
+    if np.sum(lambdas * sigma2) > 0:
         try:
             unconstrained = np.linalg.solve(r_q, ones)
         except np.linalg.LinAlgError:
             pass  # Near-singular numerical case: solve the constrained QP below.
         else:
-            unconstrained *= n / unconstrained.sum()
-            if np.min(unconstrained) >= -1e-10:
-                weights = np.maximum(unconstrained, 0.0)
-                return weights * (n / weights.sum())
+            if unconstrained.sum() > 0:
+                unconstrained *= n / unconstrained.sum()
+                if np.min(unconstrained) >= -1e-10:
+                    weights = np.maximum(unconstrained, 0.0)
+                    return weights * (n / weights.sum())
 
     # The equality-only KKT solution can contain negative weights. In that
     # case solve the full nonnegative quadratic program, rather than clipping.

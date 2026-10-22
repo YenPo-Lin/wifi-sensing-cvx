@@ -11,41 +11,49 @@ def create_parser():
     parser = argparse.ArgumentParser()
 
     # npz 文件路徑
-    file_path = "/Users/YPL/Documents/Experiments/Exp-code/20261016-181428_swing_right.npz"
+    file_path = "/Users/YPL/Documents/Experiments/Exp-code/20261021-205631_stand_right_swing_left.npz"
+    bg_path = "/Users/YPL/Documents/Experiments/Exp-code/20261021-205724_bg.npz"
     parser.add_argument('--csi_file', type=str, default=file_path)
+    parser.add_argument('--bg_file', type=str, default=bg_path)
     
     # ---- CSI parameters ----
     parser.add_argument('--f_0', type=float, default=5.57e9)
     parser.add_argument('--fs', type=int, default=100)
     parser.add_argument('--antenna_spacing', type=float, default=0.02)
+    parser.add_argument('--tx_antenna_spacing', type=float, default=None)
     
     # ---- MUSIC settings ----
-    parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'dwt', 'pca'])
+    parser.add_argument('--preprocess', type=str, default='ma', choices=['ma', 'bg'],
+                        help='Preprocessing for Doppler and RD maps')
+    parser.add_argument('--azi_preprocess', type=str, default='bg', choices=['ma', 'bg'],
+                        help='Preprocessing for Azi-ToF and Doppler-projected Azi-ToF')
     # plotted frame
-    parser.add_argument('--frame_idx', type=int, default=2150)
+    parser.add_argument('--frame_idx', type=int, default=1740)
     # MUSIC signal dimension
-    parser.add_argument('--Dop_Sdim', type=int, default=None)
-    parser.add_argument('--Azi_ToF_Sdim', type=int, default=None)
-    parser.add_argument('--Projected_Azi_ToF_Sdim_ratio', type=float, default=0.33)
-    parser.add_argument('--ToF_Dop_Sdim', type=int, default=5)
-    parser.add_argument('--Beamformed_ToF_Dop_Sdim_ratio', type=float, default=0.2)
+    parser.add_argument('--Dop_Sdim', type=int, default=9)
+    parser.add_argument('--Azi_ToF_Sdim', type=int, default=6)
+    parser.add_argument('--Azi_AoD_ToF_Sdim', type=int, default=5)
+    parser.add_argument('--AoD_ToF_Sdim', type=int, default=None)
+    parser.add_argument('--Projected_Azi_ToF_Sdim_ratio', type=float, default=0.30)
+    parser.add_argument('--ToF_Dop_Sdim', type=int, default=None)
+    parser.add_argument('--Beamformed_ToF_Dop_Sdim_ratio', type=float, default=0.30)
     parser.add_argument('--Azi_Dop_Sdim', type=int, default=None)
     parser.add_argument('--Azi_ToF_Dop_Sdim', type=int, default=None)
-    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.5)
+    parser.add_argument('--Sdim_energy_ratio', type=float, default=0.55)
     parser.add_argument('--avg_frames', type=int, default=100)
     
     parser.add_argument('--projection', type=str, default='cos', choices=['sin', 'cos'])
 
-    parser.add_argument('--stream_win', type=int, default=5) ## Azimuth Steering Vector length = stream_win
+    parser.add_argument('--stream_win', type=int, default=6) ## Azimuth Steering Vector length = stream_win
     parser.add_argument('--stream_sample_range', type=int, default=8) #all Rx
 
-    parser.add_argument('--freq_win', type=int, default=56) 
+    parser.add_argument('--freq_win', type=int, default=56)
     parser.add_argument('--freq_hop', type=int, default=3) ## ToF Steering Vector length = freq_win//freq_hop 
     parser.add_argument('--freq_sample_range', type=int, default=64) #all subcarriers
     parser.add_argument('--freq_space', type=int, default=1) # if freq resampling
 
 
-    parser.add_argument('--time_win', type=int, default= 20)
+    parser.add_argument('--time_win', type=int, default= 30)
     parser.add_argument('--time_hop', type=int, default=1) ## Doppler Steering Vector length = time_win//time_hop
     parser.add_argument('--time_sample_range', type=int, default=50) 
     parser.add_argument('--conti_hop', type=int, default=1)
@@ -56,15 +64,15 @@ def create_parser():
     # Azimuth grid
     parser.add_argument('--theta_min', type=float, default= 0)
     parser.add_argument('--theta_max', type=float, default= 180)
-    parser.add_argument('--theta_step', type=int, default=3)
+    parser.add_argument('--theta_step', type=int, default=2)
     # Time of Flight grid
     parser.add_argument('--axis', type=str, default='m', choices=['ns', 'm'])
-    parser.add_argument('--tau_min', type=float, default=1e-9)
-    parser.add_argument('--tau_max', type=float, default=15e-9)
-    parser.add_argument('--tau_step', type=float, default=3e-10)
+    parser.add_argument('--tau_min', type=float, default=3e-9)
+    parser.add_argument('--tau_max', type=float, default=20e-9)
+    parser.add_argument('--tau_step', type=float, default=2e-10)
     # Doppler grid
-    parser.add_argument('--doppler_min', type=float, default=-30)
-    parser.add_argument('--doppler_max', type=float, default=30)
+    parser.add_argument('--doppler_min', type=float, default=-25)
+    parser.add_argument('--doppler_max', type=float, default=25)
     parser.add_argument('--doppler_step', type=float, default=0.5)
 
     # Doppler spectrogram settings
@@ -93,7 +101,7 @@ def create_parser():
     parser.add_argument('--point_cloud_percentile', type=float, default=10.0)
     parser.add_argument('--point_cloud_max_points', type=int, default=60000)
     parser.add_argument('--point_cloud_point_size', type=float, default=12.0)
-    parser.add_argument('--point_cloud_point_alpha', type=float, default=0.4)
+    parser.add_argument('--point_cloud_point_alpha', type=float, default=1.0)
 
     # Doppler Projection settings
     parser.add_argument('--tof_gating', action=argparse.BooleanOptionalAction, default=True)
@@ -103,13 +111,32 @@ def create_parser():
     parser.add_argument('--pics_dir', type=str, default=None)
     
     # ----CFAR ----
-    parser.add_argument('--cfar_training_cells', type=int, default=1)
+    parser.add_argument('--cfar_training_cells', type=int, default=3)
     parser.add_argument('--cfar_guard_cells', type=int, default=1)
-    parser.add_argument('--cfar_threshold_factor', type=float, default=1.0)
+    parser.add_argument('--cfar_threshold_factor', type=float, default=1.01)
+    #例如局部背景平均為 8、候選峰為 10：
+    #- threshold_factor=1.0：門檻 8，通過。
+    #- threshold_factor=1.5：門檻 12，不通過。
+    #--cfar_threshold_factor 1.1 換算成 dB，代表峰至少要比局部背景平均高約 1.76 dB。
     parser.add_argument('--cfar_top_k', type=int, default=5)
     parser.add_argument('--cfar_min_peak_distance', type=int, default=1)
     parser.add_argument('--cfar_min_prominence_db', type=float, default=0.0)
+    parser.add_argument('--beamform_fused_min_snr_db', type=float, default=0.4)
+    parser.add_argument('--beamform_candidate_min_snr_db', type=float, default=0.5)
+    parser.add_argument('--beamform_fd_max_halfwidth_hz', type=float, default=3.0)
     parser.add_argument('--fd_band', type=float, default=2.0)
+
+    # ---- CFAR and matching thresholds for RD stability ----
+    parser.add_argument('--track_cfar_training_cells', type=int, default=3)
+    parser.add_argument('--track_cfar_guard_cells', type=int, default=1)
+    parser.add_argument('--track_cfar_threshold_factor', type=float, default=1.01)
+    parser.add_argument('--track_cfar_top_k', type=int, default=5)
+    parser.add_argument('--track_cfar_min_peak_distance', type=int, default=1)
+    parser.add_argument('--track_cfar_min_snr_db', type=float, default=0.0)
+    parser.add_argument('--track_tau_gate_ns', type=float, default=2.0)
+    parser.add_argument('--track_fd_gate_hz', type=float, default=2.0)
+    parser.add_argument('--track_min_hits', type=int, default=2)
+    parser.add_argument('--track_min_ratio', type=float, default=0.5)
 
 
     
@@ -185,9 +212,20 @@ if __name__ == '__main__':
 
 
 
+
+
+
+    with np.load(args.bg_file, allow_pickle=False) as metadata:
+
+        BG = metadata["csi"]
+        if BG.ndim != 4:
+            raise ValueError("BackGround CSI needs to be 4D array (frame, Tx, Rx, subcarrier), " f"{BG.shape}。")
+
+
+
     print("🥶 Start Signal Processing...")
     start = time.time()
-    signal_processing(CSI, args)
+    signal_processing(CSI,BG, args)
     
     elapsed_time = time.time() - start
     print(f"🥶 End Signal Processing: {elapsed_time:.2f} (s)")

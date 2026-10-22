@@ -1,175 +1,147 @@
-import os
-import numpy as np
+"""Build Doppler-resolved point sets from projected Azi-ToF MUSIC maps."""
+
+from pathlib import Path
+
 import matplotlib.pyplot as plt
+import numpy as np
 
 
-class PointCloud_Generator:
-    def __init__(self, args):
-        self.args = args
+def azi_tof_dop_pc(
+    projected_spectra,
+    theta_grid,
+    tau_grid,
+    *,
+    frame_idx,
+    target_id,
+    pics_dir=None,
+    energy_fraction=0.05,
+):
+    """Keep the fewest strongest pixels covering 10% of each map's magnitude sum.
 
-    def generate_point_cloud(self, result):
-        """Convert heatmaps to ``[azimuth_deg, ToF_ns, fd_Hz, dB]`` points.
+    projected_spectra maps signed Doppler frequencies (Hz) to separate
+    linear MUSIC pseudo-spectra of shape (azimuth, ToF). Each map is ranked
+    independently before any Doppler-band sum. The point columns are
+    [azimuth_deg, ToF_ns, Doppler_Hz, linear_MUSIC_pseudo_spectrum].
+    """
+    theta_grid = np.asarray(theta_grid, dtype=float)
+    tau_grid = np.asarray(tau_grid, dtype=float)
+    if theta_grid.ndim != 1 or tau_grid.ndim != 1 or not theta_grid.size or not tau_grid.size:
+        raise ValueError("theta_grid and tau_grid must be nonempty 1-D arrays")
+    if not np.all(np.isfinite(theta_grid)) or not np.all(np.isfinite(tau_grid)):
+        raise ValueError("theta_grid and tau_grid must contain finite values")
+    if not 0.0 < energy_fraction <= 1.0:
+        raise ValueError("energy_fraction must be in (0, 1]")
 
-        ``result`` is the list returned by
-        ``Azi_ToF.gen_Doppler_projection_spectrum``. Each heatmap is filtered
-        independently using the stricter of the configured percentile and
-        dynamic-range thresholds. The returned intensity is the original
-        MUSIC pseudo-spectrum value in dB.
-        """
-        if result is None:
-            raise ValueError("result cannot be None")
-        results = [result] if isinstance(result, dict) else list(result)
-        if not results:
-            return np.empty((0, 4), dtype=float)
+    clouds = []
+    selected_fds = []
+    input_magnitude_sums = []
+    selected_magnitude_sums = []
+    for fd, spectrum in sorted(projected_spectra.items()):
+        fd = float(fd)
+        spectrum = np.asarray(spectrum, dtype=float)
+        if not np.isfinite(fd):
+            raise ValueError("Doppler frequencies must be finite")
+        if spectrum.shape != (theta_grid.size, tau_grid.size):
+            raise ValueError("each projected spectrum must have shape (azimuth, ToF)")
+        if not np.all(np.isfinite(spectrum)) or np.any(spectrum < 0):
+            raise ValueError("projected spectra must contain finite nonnegative values")
 
-        percentile = float(
-            getattr(self.args, "point_cloud_percentile", 95.0)
+        selected_fds.append(fd)
+        flat = spectrum.ravel()
+        ranked = np.argsort(-flat, kind="stable")
+        total = float(np.sum(flat, dtype=np.float64))
+        if not np.isfinite(total):
+            raise ValueError("projected spectrum magnitude sum must be finite")
+        input_magnitude_sums.append(total)
+        if total == 0.0:
+            selected_magnitude_sums.append(0.0)
+            continue
+        cumulative = np.cumsum(flat[ranked], dtype=np.float64)
+        count = min(int(np.searchsorted(cumulative, energy_fraction * total) + 1), flat.size)
+        ranked = ranked[:count]
+        selected_magnitude_sums.append(float(cumulative[count - 1]))
+        theta_idx, tau_idx = np.unravel_index(ranked, spectrum.shape)
+        clouds.append(
+            np.column_stack((
+                theta_grid[theta_idx],
+                tau_grid[tau_idx] * 1e9,
+                np.full(count, fd),
+                flat[ranked],
+            ))
         )
-        dynamic_range_db = float(
-            getattr(self.args, "point_cloud_dynamic_range_db", 10.0)
+
+    points = np.concatenate(clouds) if clouds else np.empty((0, 4), dtype=float)
+    if pics_dir is None:
+        return points, None
+
+    save_dir = Path(pics_dir) / "Point_Cloud"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    stem = f"{int(frame_idx):04d}_target_{int(target_id):02d}_azi_tof_dop_pc"
+    data_path = save_dir / f"{stem}.npz"
+    """
+    np.savez_compressed(
+        data_path,
+        points=points,
+        columns=np.array(["azi_deg", "tof_ns", "dop_hz", "mag_linear_pseudo"]),
+        frame_idx=int(frame_idx),
+        target_id=int(target_id),
+        energy_fraction=float(energy_fraction),
+        projected_fds=np.asarray(selected_fds, dtype=float),
+        input_magnitude_sums=np.asarray(input_magnitude_sums, dtype=float),
+        selected_magnitude_sums=np.asarray(selected_magnitude_sums, dtype=float),
+    )
+
+    print(f"Saved point cloud: {data_path}")
+    """
+    return points, str(data_path)
+
+
+def plot_azi_tof_dop_pc(
+    point_clouds,
+    theta_grid,
+    tau_grid,
+    *,
+    frame_idx,
+    pics_dir,
+    max_plot_points=60000,
+    point_size=12.0,
+    point_alpha=1.0,
+):
+    """Overlay all target point clouds in one azimuth-ToF plot, colored by Doppler."""
+    if pics_dir is None:
+        return None
+    if max_plot_points < 1 or point_size <= 0 or not 0 <= point_alpha <= 1:
+        raise ValueError("plot limits, point size, and point alpha must be valid")
+    points = np.concatenate(point_clouds) if point_clouds else np.empty((0, 4), dtype=float)
+    # Limit only the preview; each target's data file keeps every selected point.
+    plotted = points
+    if points.shape[0] > max_plot_points:
+        strongest = np.argpartition(points[:, 3], -max_plot_points)[-max_plot_points:]
+        plotted = points[strongest]
+
+    fig, ax = plt.subplots(figsize=(10, 8), constrained_layout=True)
+    if plotted.size:
+        # Interleave targets so overlapping coordinates do not always hide
+        # the targets plotted first.
+        plotted = plotted[np.random.default_rng(0).permutation(plotted.shape[0])]
+        doppler_limit = float(np.max(np.abs(points[:, 2])))
+        doppler_limit = doppler_limit if doppler_limit > 0 else 1.0
+        scatter = ax.scatter(
+            plotted[:, 0], plotted[:, 1],
+            c=plotted[:, 2], cmap="bwr",
+            vmin=-doppler_limit, vmax=doppler_limit,
+            s=point_size, alpha=point_alpha,
         )
-        max_points = int(
-            getattr(self.args, "point_cloud_max_points", 60000)
-        )
-        if not np.isfinite(percentile) or not 0.0 <= percentile <= 100.0:
-            raise ValueError("point-cloud percentile must be in [0, 100]")
-        if not np.isfinite(dynamic_range_db) or dynamic_range_db < 0.0:
-            raise ValueError("point-cloud dynamic range must be non-negative")
-        if max_points < 1:
-            raise ValueError("point-cloud max_points must be positive")
-
-        clouds = []
-        required_keys = {"fd", "theta_grid", "tau_grid", "spectrum_db"}
-        for map_idx, item in enumerate(results):
-            if not isinstance(item, dict):
-                raise TypeError(f"result[{map_idx}] must be a dictionary")
-            missing = required_keys.difference(item)
-            if missing:
-                raise KeyError(
-                    f"result[{map_idx}] is missing keys: {sorted(missing)}"
-                )
-
-            fd = float(item["fd"])
-            theta_grid = np.asarray(item["theta_grid"], dtype=float)
-            tau_grid = np.asarray(item["tau_grid"], dtype=float)
-            spectrum_db = np.asarray(item["spectrum_db"], dtype=float)
-
-            if not np.isfinite(fd):
-                raise ValueError(f"result[{map_idx}]['fd'] must be finite")
-            if theta_grid.ndim != 1 or theta_grid.size == 0:
-                raise ValueError(
-                    f"result[{map_idx}]['theta_grid'] must be non-empty 1-D"
-                )
-            if tau_grid.ndim != 1 or tau_grid.size == 0:
-                raise ValueError(
-                    f"result[{map_idx}]['tau_grid'] must be non-empty 1-D"
-                )
-            expected_shape = (theta_grid.size, tau_grid.size)
-            if spectrum_db.shape != expected_shape:
-                raise ValueError(
-                    f"result[{map_idx}]['spectrum_db'] must have shape "
-                    f"{expected_shape}, got {spectrum_db.shape}"
-                )
-            if not np.all(np.isfinite(theta_grid)) or not np.all(
-                np.isfinite(tau_grid)
-            ):
-                raise ValueError(
-                    f"result[{map_idx}] grids must contain only finite values"
-                )
-
-            finite = np.isfinite(spectrum_db)
-            finite_values = spectrum_db[finite]
-            if finite_values.size == 0:
-                continue
-
-            threshold_db = max(
-                float(np.max(finite_values)) - dynamic_range_db,
-                float(np.percentile(finite_values, percentile)),
-            )
-            selected = finite & (spectrum_db >= threshold_db)
-            theta_idx, tau_idx = np.nonzero(selected)
-            if theta_idx.size == 0:
-                continue
-
-            azimuth = theta_grid[theta_idx]
-            tof_ns = tau_grid[tau_idx] * 1e9
-            doppler = np.full(theta_idx.size, fd, dtype=float)
-            intensity = spectrum_db[theta_idx, tau_idx]
-            clouds.append(
-                np.column_stack((azimuth, tof_ns, doppler, intensity))
-            )
-
-        if not clouds:
-            points = np.empty((0, 4), dtype=float)
-            self._save_point_cloud(points)
-            return points
-
-        points = np.concatenate(clouds, axis=0)
-        if points.shape[0] > max_points:
-            keep = np.argpartition(points[:, 3], -max_points)[-max_points:]
-            points = points[keep]
-
-        self._save_point_cloud(points)
-        
-        return points
-
-    def _save_point_cloud(self, points):
-        """Save an Azimuth-ToF-Doppler scatter colored by Doppler."""
-        pics_dir = getattr(self.args, "pics_dir", None)
-        if pics_dir is None:
-            return
-
-        frame_idx = int(getattr(self.args, "frame_idx", 0))
-        point_size = float(getattr(self.args, "point_cloud_point_size", 3.0))
-        point_alpha = float(getattr(self.args, "point_cloud_point_alpha", 0.05))
-        if not np.isfinite(point_size) or point_size <= 0.0:
-            raise ValueError("point_cloud_point_size must be positive")
-        if not np.isfinite(point_alpha) or not 0.0 <= point_alpha <= 1.0:
-            raise ValueError("point_cloud_point_alpha must be in [0, 1]")
-
-        save_dir = os.path.join(pics_dir, "Point_Cloud")
-        os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"{frame_idx}_pc.png")
-
-        fig = plt.figure(figsize=(10, 8), constrained_layout=True)
-        ax = fig.add_subplot(111, projection="3d")
-
-        if points.size:
-            scatter = ax.scatter(
-                points[:, 0],
-                points[:, 1],
-                points[:, 2],
-                c=points[:, 2],
-                cmap="bwr",
-                vmin=float(np.min(points[:, 2])),
-                vmax=float(np.max(points[:, 2])),
-                marker="o",
-                s=point_size,
-                alpha=point_alpha,
-                depthshade=False,
-            )
-            
-            # 將 colorbar 獨立指派給變數 cbar
-            cbar = fig.colorbar(
-                scatter,
-                ax=ax,
-                label="Doppler frequency (Hz)",
-                shrink=0.6,
-                pad=0.1,
-            )
-            
-            # 強制將 colorbar 的透明度設為 1 (完全不透明) 並重新繪製
-            cbar.set_alpha(1.0)
-
-
-        ax.set_xlabel("Azimuth (deg)")
-        ax.set_ylabel("ToF (ns)")
-        ax.set_zlabel("Doppler frequency (Hz)")
-        ax.set_title(f"Raw Azimuth-ToF-Doppler Point Cloud @ frame {frame_idx}")
-        ax.view_init(elev=20, azim=-45)
-        fig.savefig(save_path, dpi=120)
-
-
-        #plt.close(fig)
-        plt.show()
-        print(f"Saved: {save_path}")
+        fig.colorbar(scatter, ax=ax, label="Doppler (Hz)")
+    ax.set_xlabel("Azimuth (deg)")
+    ax.set_ylabel("ToF (ns)")
+    ax.set_xlim(np.min(theta_grid), np.max(theta_grid))
+    ax.set_ylim(np.min(tau_grid) * 1e9, np.max(tau_grid) * 1e9)
+    ax.set_title(f"Projected Azi-ToF-Doppler points | frame {frame_idx} | all targets")
+    save_dir = Path(pics_dir) / "Point_Cloud"
+    save_dir.mkdir(parents=True, exist_ok=True)
+    plot_path = save_dir / f"{int(frame_idx):04d}_all_targets_azi_tof_dop_pc.png"
+    fig.savefig(plot_path, dpi=120)
+    plt.close(fig)
+    print(f"Saved point cloud plot: {plot_path}")
+    return str(plot_path)

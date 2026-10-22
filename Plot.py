@@ -7,7 +7,7 @@ from matplotlib.ticker import MaxNLocator
 
 def _tof_axis_values_and_label(tau, args):
     if getattr(args, "axis", "ns") == "m":
-        return tau * 3e8 / 2.0, "distance (m)"
+        return tau * 3e8 / 2.0, "Distance (m)"
     return tau * 1e9, "ToF (ns)"
 
 def _axis_values_and_label(axis_name, values, args):
@@ -15,6 +15,8 @@ def _axis_values_and_label(axis_name, values, args):
         return _tof_axis_values_and_label(values, args)
     if axis_name == "azi":
         return values, "Azimuth (deg)"
+    if axis_name == "aod":
+        return values, "AoD (deg)"
     if axis_name == "doppler":
         return values, "Doppler frequency (Hz)"
     raise ValueError(f"Unsupported axis name: {axis_name}")
@@ -36,11 +38,16 @@ def _plot_target_gt(ax, target_label, x_axis, y_axis, args):
         )
 
     column_by_axis = {"tof": 0, "doppler": 1}
-    x_gt, _ = _axis_values_and_label(
-        x_axis, target_label[:, column_by_axis[x_axis]], args
-    )
-    y_gt, _ = _axis_values_and_label(
-        y_axis, target_label[:, column_by_axis[y_axis]], args
+    x_gt, _ = _axis_values_and_label(x_axis, target_label[:, column_by_axis[x_axis]], args)
+    y_gt, _ = _axis_values_and_label(y_axis, target_label[:, column_by_axis[y_axis]], args)
+    ax.scatter(
+        x_gt,
+        y_gt,
+        marker="x",
+        s=70,          # 尺寸比原本大一點
+        color="white",
+        linewidths=3.0, # 線條比原本粗，製造外框效果
+        zorder=2,
     )
     ax.scatter(
         x_gt,
@@ -278,6 +285,7 @@ def plot_spectrum(
     if save and args.pics_dir is not None:
         output_folder_by_axes = {
             frozenset(("azi", "tof")): "Azi_ToF",
+            frozenset(("aod", "tof")): "AoD_ToF",
             frozenset(("azi", "doppler")): "Azi_Doppler",
             frozenset(("tof", "doppler")): "ToF_Doppler",
         }
@@ -293,6 +301,46 @@ def plot_spectrum(
         print(f"Saved: {save_path}")
 
     return ax
+
+
+def plot_multi_spectrum(spectra, args, *, file_name="Project_targets"):
+    """Plot one row of Azi-ToF spectra using ``plot_spectrum`` for each target.
+
+    Each item supplies ``frame_idx``, ``x_values``, ``y_values``, ``P_music``
+    in (y, x) order, and optionally ``title``. The figure is saved once.
+    """
+    if not spectra:
+        raise ValueError("spectra must contain at least one target map")
+
+    fig, axes = plt.subplots(
+        1, len(spectra),
+        figsize=(5.5 * len(spectra), 4.5),
+        squeeze=False,
+        constrained_layout=True,
+    )
+    for item, ax in zip(spectra, axes[0]):
+        plot_spectrum(
+            item["frame_idx"],
+            item["x_values"],
+            item["y_values"],
+            item["P_music"],
+            args,
+            title=item.get("title", ""),
+            spectrum_axes=("azi", "tof"),
+            ax=ax,
+            save=False,
+            target_label=np.empty((0, 2)),
+        )
+
+    if args.pics_dir is not None:
+        save_dir = os.path.join(args.pics_dir, "Azi_ToF")
+        os.makedirs(save_dir, exist_ok=True)
+        save_path = os.path.join(save_dir, f"{int(spectra[0]['frame_idx']):04d}_{file_name}.png")
+        fig.savefig(save_path, dpi=100)
+        plt.close(fig)
+        print(f"Saved: {save_path}")
+
+    return axes[0]
 
 
 def plot_1D_spectrum(frame_idx, fd_grid, spectrum_db, args, *, title="Doppler MUSIC", sdim=None):

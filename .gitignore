@@ -1,22 +1,13 @@
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-.DS_Store
-.vscode/
-.ipynb_checkpoints/
-
+# Recorded CSI data
 *.npz
-*.npy
-*.png
-*.mat
-*.h5
-*.csv
-*.xlsx
 
-pics/
-figures/
-outputs/
-results/
-logs/
+# Generated figures
+*.png
+
+# Python cache
+__pycache__/
+*.py[cod]
+.pytest_cache/
+
+# macOS metadata
+.DS_Store
